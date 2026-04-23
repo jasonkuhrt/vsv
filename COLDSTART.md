@@ -8,20 +8,20 @@ You are a coldstart agent. Your task is to scaffold and implement the initial ve
 
 ### 0.1 Banned dependencies — do NOT introduce any of these
 
-| Banned | Why | Use instead |
-|---|---|---|
-| `jest`, `jest-*`, anything with `jest` in the name | User rejected Jest explicitly | Bun's `bun:test` native runner |
-| `jest-mock-vscode` | Jest lineage + not needed | Hand-rolled vscode mock + Bun's `mock.module()` |
-| `vitest`, `@vitest/*` | User's template uses `bun test` | Bun's `bun:test` native runner |
-| `mocha`, `chai`, `sinon` | Legacy JS testing stack | `bun:test`, native matchers, native spies |
-| `webpack`, `ts-loader`, `babel-loader` | Legacy bundler stack | N/A — no bundling in this project |
-| `rollup`, `rolldown`, `vite`, `esbuild` as direct deps | Out of v1 scope (no bundling) | N/A — ship source only, loader hook at consume time |
-| `@vscode/vsce`, `vsce` | Out of v1 scope (no packaging) | N/A |
-| `eslint`, `@typescript-eslint/*`, `prettier` | Template uses oxlint/oxfmt | `oxlint --type-aware`, `oxfmt` (already in template) |
-| `tsc` (in scripts) | Template uses `tsgo` (native-preview) | `tsgo` |
-| `ts-node`, `ts-node-dev`, `nodemon` | Bun/tsgo cover these | Bun native + `tsgo --watch` |
-| `commander`, `yargs`, `cac`, `clipanion` for CLI | Template already pulls `@effect/platform` | Use `@effect/platform`'s `Command` / `CliApp` |
-| Any `*-config-*` preset package for tsconfig/oxlint | Template inlines these | Use template's config as-is |
+| Banned                                                 | Why                                       | Use instead                                          |
+| ------------------------------------------------------ | ----------------------------------------- | ---------------------------------------------------- |
+| `jest`, `jest-*`, anything with `jest` in the name     | User rejected Jest explicitly             | Bun's `bun:test` native runner                       |
+| `jest-mock-vscode`                                     | Jest lineage + not needed                 | Hand-rolled vscode mock + Bun's `mock.module()`      |
+| `vitest`, `@vitest/*`                                  | User's template uses `bun test`           | Bun's `bun:test` native runner                       |
+| `mocha`, `chai`, `sinon`                               | Legacy JS testing stack                   | `bun:test`, native matchers, native spies            |
+| `webpack`, `ts-loader`, `babel-loader`                 | Legacy bundler stack                      | N/A — no bundling in this project                    |
+| `rollup`, `rolldown`, `vite`, `esbuild` as direct deps | Out of v1 scope (no bundling)             | N/A — ship source only, loader hook at consume time  |
+| `@vscode/vsce`, `vsce`                                 | Out of v1 scope (no packaging)            | N/A                                                  |
+| `eslint`, `@typescript-eslint/*`, `prettier`           | Template uses oxlint/oxfmt                | `oxlint --type-aware`, `oxfmt` (already in template) |
+| `tsc` (in scripts)                                     | Template uses `tsgo` (native-preview)     | `tsgo`                                               |
+| `ts-node`, `ts-node-dev`, `nodemon`                    | Bun/tsgo cover these                      | Bun native + `tsgo --watch`                          |
+| `commander`, `yargs`, `cac`, `clipanion` for CLI       | Template already pulls `@effect/platform` | Use `@effect/platform`'s `Command` / `CliApp`        |
+| Any `*-config-*` preset package for tsconfig/oxlint    | Template inlines these                    | Use template's config as-is                          |
 
 If you find yourself about to `bun add` something not in the explicit dependency list (§2), STOP and ask.
 
@@ -84,10 +84,10 @@ Consumer extensions use `bun link @jasonkuhrt/vsv` and import from `@jasonkuhrt/
 
 Consumer extension projects span two runtimes. Do not conflate them:
 
-| Context | Runtime | TypeScript handling | vscode module |
-|---|---|---|---|
-| Consumer's **tests** (running under `bun test`) | Bun | Native — Bun strips types | Replaced via `bun:test`'s `mock.module` by vsv's `installVSCodeMock()` |
-| Consumer's **extension at runtime** (activated by VSCode) | Node (VSCode's extension host) | `tsx` loader hook via generated `bootstrap.cjs`/`bootstrap.mjs` | Provided by the extension host itself |
+| Context                                                   | Runtime                        | TypeScript handling                                             | vscode module                                                          |
+| --------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Consumer's **tests** (running under `bun test`)           | Bun                            | Native — Bun strips types                                       | Replaced via `bun:test`'s `mock.module` by vsv's `installVSCodeMock()` |
+| Consumer's **extension at runtime** (activated by VSCode) | Node (VSCode's extension host) | `tsx` loader hook via generated `bootstrap.cjs`/`bootstrap.mjs` | Provided by the extension host itself                                  |
 
 The loader hook is NOT used at test time and must NOT be loaded by test runs. The bootstrap generator only affects the consumer's `package.json.main` for VSCode's load path, not their test files.
 
@@ -157,18 +157,18 @@ Verify `tsx` actually supports runtime type-stripping for VSCode's extension hos
 
 ## 3. Technical foundation
 
-| Concern | Tool |
-|---|---|
-| Runtime | Bun (latest stable) |
-| Language | TypeScript, ESM only (`"type": "module"`) |
-| Type checker | `tsgo` via `@typescript/native-preview` |
-| Test runner | `bun test` — import from `"bun:test"` |
-| Module mocking in tests | Bun's `mock.module()` — nothing else |
-| Linter | `oxlint --type-aware` with `oxlint-tsgolint` |
-| Formatter | `oxfmt` |
-| Schema / types | `effect`, specifically `Schema.TaggedClass` patterns |
-| CLI framework | `@effect/platform` `Command` / `CliApp` |
-| Template base | `/Users/jasonkuhrt/projects/jasonkuhrt/template-typescript-lib` |
+| Concern                 | Tool                                                            |
+| ----------------------- | --------------------------------------------------------------- |
+| Runtime                 | Bun (latest stable)                                             |
+| Language                | TypeScript, ESM only (`"type": "module"`)                       |
+| Type checker            | `tsgo` via `@typescript/native-preview`                         |
+| Test runner             | `bun test` — import from `"bun:test"`                           |
+| Module mocking in tests | Bun's `mock.module()` — nothing else                            |
+| Linter                  | `oxlint --type-aware` with `oxlint-tsgolint`                    |
+| Formatter               | `oxfmt`                                                         |
+| Schema / types          | `effect`, specifically `Schema.TaggedClass` patterns            |
+| CLI framework           | `@effect/platform` `Command` / `CliApp`                         |
+| Template base           | `/Users/jasonkuhrt/projects/jasonkuhrt/template-typescript-lib` |
 
 ## 4. Target location
 
@@ -187,14 +187,11 @@ Single-package repo (no monorepo). Consumer extensions live in sibling directori
 ```typescript
 import { Schema } from 'effect'
 
-export class CommandDecl extends Schema.TaggedClass<CommandDecl>()(
-  'CommandDecl',
-  {
-    id: Schema.NonEmptyTrimmedString,
-    args: Schema.Unknown,
-    result: Schema.Unknown,
-  }
-) {}
+export class CommandDecl extends Schema.TaggedClass<CommandDecl>()('CommandDecl', {
+  id: Schema.NonEmptyTrimmedString,
+  args: Schema.Unknown,
+  result: Schema.Unknown,
+}) {}
 ```
 
 ### 5.2 Construct via `.make`, never via plain object literals
@@ -308,31 +305,31 @@ vsv/
   "license": "MIT",
   "author": {
     "name": "Jason Kuhrt",
-    "url": "https://kuhrt.me"
+    "url": "https://kuhrt.me",
   },
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/jasonkuhrt/vsv.git"
+    "url": "git+ssh://git@github.com/jasonkuhrt/vsv.git",
   },
   "keywords": ["vscode", "extension", "sdk", "effect", "voidzero", "bun"],
   "bin": {
-    "vsv": "./build/exports/cli.js"
+    "vsv": "./build/exports/cli.js",
   },
   "imports": {
-    "#lib/*": "./src/lib/*.ts"
+    "#lib/*": "./src/lib/*.ts",
   },
   "exports": {
-    ".":              "./build/exports/index.js",
-    "./manifest":     "./build/exports/manifest.js",
-    "./runtime":      "./build/exports/runtime.js",
+    ".": "./build/exports/index.js",
+    "./manifest": "./build/exports/manifest.js",
+    "./runtime": "./build/exports/runtime.js",
     "./runtime/test": "./build/exports/runtime-test.js",
-    "./cli":          "./build/exports/cli.js"
+    "./cli": "./build/exports/cli.js",
   },
   "files": ["build", "src", "README.md", "COLDSTART.md"],
   "dependencies": {
     "effect": "^3.19.19",
     "@effect/platform": "^0.94.5",
-    "@effect/platform-node": "^0.104.1"
+    "@effect/platform-node": "^0.104.1",
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.2",
@@ -347,7 +344,7 @@ vsv/
     "oxlint": "^1.51.0",
     "oxlint-tsgolint": "^0.16.0",
     "publint": "^0.3.18",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
   },
   "scripts": {
     "build": "tsgo --build tsconfig.build.json",
@@ -364,8 +361,8 @@ vsv/
     "check:lint": "oxlint --type-aware --deny-warnings",
     "check:types": "tsgo",
     "check:package": "publint run --strict",
-    "check:exports": "attw --pack . --profile esm-only"
-  }
+    "check:exports": "attw --pack . --profile esm-only",
+  },
 }
 ```
 
@@ -380,16 +377,13 @@ See §5 for conventions. Full sketch of `src/lib/manifest/schema.ts`:
 ```typescript
 import { Schema } from 'effect'
 
-export class CommandDecl extends Schema.TaggedClass<CommandDecl>()(
-  'CommandDecl',
-  {
-    id: Schema.NonEmptyTrimmedString,
-    args: Schema.Unknown,
-    result: Schema.Unknown,
-    title: Schema.optional(Schema.String),
-    category: Schema.optional(Schema.String),
-  }
-) {}
+export class CommandDecl extends Schema.TaggedClass<CommandDecl>()('CommandDecl', {
+  id: Schema.NonEmptyTrimmedString,
+  args: Schema.Unknown,
+  result: Schema.Unknown,
+  title: Schema.optional(Schema.String),
+  category: Schema.optional(Schema.String),
+}) {}
 
 export class ExternalCommandDecl extends Schema.TaggedClass<ExternalCommandDecl>()(
   'ExternalCommandDecl',
@@ -398,54 +392,42 @@ export class ExternalCommandDecl extends Schema.TaggedClass<ExternalCommandDecl>
     args: Schema.Unknown,
     result: Schema.Unknown,
     fromExtension: Schema.optional(Schema.String),
-  }
+  },
 ) {}
 
-export class ContextKeyDecl extends Schema.TaggedClass<ContextKeyDecl>()(
-  'ContextKeyDecl',
-  {
-    name: Schema.NonEmptyTrimmedString,
-    valueType: Schema.Unknown,
-    defaultValue: Schema.optional(Schema.Unknown),
-  }
-) {}
+export class ContextKeyDecl extends Schema.TaggedClass<ContextKeyDecl>()('ContextKeyDecl', {
+  name: Schema.NonEmptyTrimmedString,
+  valueType: Schema.Unknown,
+  defaultValue: Schema.optional(Schema.Unknown),
+}) {}
 
-export class ConfigDecl extends Schema.TaggedClass<ConfigDecl>()(
-  'ConfigDecl',
-  {
-    key: Schema.NonEmptyTrimmedString,
-    valueSchema: Schema.Unknown,
-    description: Schema.optional(Schema.String),
-  }
-) {}
+export class ConfigDecl extends Schema.TaggedClass<ConfigDecl>()('ConfigDecl', {
+  key: Schema.NonEmptyTrimmedString,
+  valueSchema: Schema.Unknown,
+  description: Schema.optional(Schema.String),
+}) {}
 
-export class StateDecl extends Schema.TaggedClass<StateDecl>()(
-  'StateDecl',
-  {
-    key: Schema.NonEmptyTrimmedString,
-    scope: Schema.Literal('global', 'workspace'),
-    valueSchema: Schema.Unknown,
-  }
-) {}
+export class StateDecl extends Schema.TaggedClass<StateDecl>()('StateDecl', {
+  key: Schema.NonEmptyTrimmedString,
+  scope: Schema.Literal('global', 'workspace'),
+  valueSchema: Schema.Unknown,
+}) {}
 
-export class Manifest extends Schema.TaggedClass<Manifest>()(
-  'Manifest',
-  {
-    name: Schema.NonEmptyTrimmedString,
-    displayName: Schema.optional(Schema.String),
-    description: Schema.optional(Schema.String),
-    publisher: Schema.optional(Schema.String),
-    version: Schema.optional(Schema.String),
-    engineVscode: Schema.optional(Schema.String),
-    activationEvents: Schema.optional(Schema.Array(Schema.String)),
-    extensionDependencies: Schema.optional(Schema.Array(Schema.String)),
-    commands: Schema.optional(Schema.Array(CommandDecl)),
-    externalCommands: Schema.optional(Schema.Array(ExternalCommandDecl)),
-    contextKeys: Schema.optional(Schema.Array(ContextKeyDecl)),
-    config: Schema.optional(Schema.Array(ConfigDecl)),
-    state: Schema.optional(Schema.Array(StateDecl)),
-  }
-) {}
+export class Manifest extends Schema.TaggedClass<Manifest>()('Manifest', {
+  name: Schema.NonEmptyTrimmedString,
+  displayName: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
+  publisher: Schema.optional(Schema.String),
+  version: Schema.optional(Schema.String),
+  engineVscode: Schema.optional(Schema.String),
+  activationEvents: Schema.optional(Schema.Array(Schema.String)),
+  extensionDependencies: Schema.optional(Schema.Array(Schema.String)),
+  commands: Schema.optional(Schema.Array(CommandDecl)),
+  externalCommands: Schema.optional(Schema.Array(ExternalCommandDecl)),
+  contextKeys: Schema.optional(Schema.Array(ContextKeyDecl)),
+  config: Schema.optional(Schema.Array(ConfigDecl)),
+  state: Schema.optional(Schema.Array(StateDecl)),
+}) {}
 ```
 
 `src/lib/manifest/define.ts`:
@@ -480,16 +462,12 @@ export const createRuntime = <
   executeCommand: <Id extends keyof CR & string>(
     id: Id,
     args: CR[Id]['args'],
-  ): Promise<CR[Id]['result']> =>
-    Promise.resolve(vscode.commands.executeCommand(id, args)),
+  ): Promise<CR[Id]['result']> => Promise.resolve(vscode.commands.executeCommand(id, args)),
 
   executeCommandRaw: (id: string, ...args: unknown[]): Promise<unknown> =>
     Promise.resolve(vscode.commands.executeCommand(id, ...args)),
 
-  defineContextKey: <K extends keyof CKR & string>(
-    key: K,
-    initialValue: CKR[K],
-  ) => {
+  defineContextKey: <K extends keyof CKR & string>(key: K, initialValue: CKR[K]) => {
     let current = initialValue
     const listeners = new Set<(v: CKR[K]) => void>()
     vscode.commands.executeCommand('setContext', key, current)
@@ -573,15 +551,15 @@ Leave ALL other package.json fields untouched (main, scripts, dependencies, devD
 
 Throughout vsv's internal code, prefer Bun globals over `node:*` equivalents when available:
 
-| Task | Use | Not |
-|---|---|---|
-| Read file | `Bun.file(path).text()` / `.json()` / `.bytes()` | `node:fs/promises` `readFile` |
-| Write file | `Bun.write(path, data)` | `node:fs/promises` `writeFile` |
-| Spawn subprocess | `Bun.spawn([cmd, ...args])` | `node:child_process` `spawn` |
-| Glob files | `new Bun.Glob(pattern).scan(dir)` | `fast-glob`, `globby` |
-| Watch files | Bun's `fs.watch` (same API as Node but faster) | `chokidar` (banned) |
-| Current working dir | `process.cwd()` (works in Bun) | — |
-| Path manipulation | `node:path` (no Bun equivalent) | — |
+| Task                | Use                                              | Not                            |
+| ------------------- | ------------------------------------------------ | ------------------------------ |
+| Read file           | `Bun.file(path).text()` / `.json()` / `.bytes()` | `node:fs/promises` `readFile`  |
+| Write file          | `Bun.write(path, data)`                          | `node:fs/promises` `writeFile` |
+| Spawn subprocess    | `Bun.spawn([cmd, ...args])`                      | `node:child_process` `spawn`   |
+| Glob files          | `new Bun.Glob(pattern).scan(dir)`                | `fast-glob`, `globby`          |
+| Watch files         | Bun's `fs.watch` (same API as Node but faster)   | `chokidar` (banned)            |
+| Current working dir | `process.cwd()` (works in Bun)                   | —                              |
+| Path manipulation   | `node:path` (no Bun equivalent)                  | —                              |
 
 Fall back to `node:*` only when Bun has no equivalent. Do not add userland glob/watcher packages.
 
@@ -613,12 +591,16 @@ Plugin structure per Oxlint JS Plugin docs — use the ESLint v9+ compatible API
 // Exports to include (minimum viable):
 export const commands = {
   registerCommand: (id: string, handler: Function) => ({ dispose: () => {} }),
-  executeCommand: async (id: string, ...args: unknown[]) => { /* ... */ },
+  executeCommand: async (id: string, ...args: unknown[]) => {
+    /* ... */
+  },
   getCommands: async (filterInternal?: boolean) => [] as string[],
 }
 
 export const workspace = {
-  getConfiguration: (section?: string) => ({ /* WorkspaceConfiguration surface */ }),
+  getConfiguration: (section?: string) => ({
+    /* WorkspaceConfiguration surface */
+  }),
 }
 
 export const window = {
@@ -626,11 +608,17 @@ export const window = {
   // ... as needed
 }
 
-export class EventEmitter<T> { /* fire, event, dispose */ }
+export class EventEmitter<T> {
+  /* fire, event, dispose */
+}
 export class Disposable {
   constructor(public callOnDispose: () => void) {}
-  dispose() { this.callOnDispose() }
-  static from(...disposables: Disposable[]): Disposable { /* ... */ }
+  dispose() {
+    this.callOnDispose()
+  }
+  static from(...disposables: Disposable[]): Disposable {
+    /* ... */
+  }
 }
 
 export const ConfigurationTarget = { Global: 1, Workspace: 2, WorkspaceFolder: 3 } as const
@@ -683,7 +671,9 @@ const createMockMemento = () => {
   const store = new Map<string, unknown>()
   return {
     get: <T>(key: string, defaultValue?: T) => (store.get(key) as T) ?? defaultValue,
-    update: async (key: string, value: unknown) => { store.set(key, value) },
+    update: async (key: string, value: unknown) => {
+      store.set(key, value)
+    },
     keys: () => Array.from(store.keys()),
   }
 }
@@ -701,9 +691,10 @@ expect.extend({
     const has = received.state.getRegisteredCommands().includes(id)
     return {
       pass: has,
-      message: () => has
-        ? `Expected vscode mock not to have command ${id}`
-        : `Expected vscode mock to have command ${id}, got [${received.state.getRegisteredCommands().join(', ')}]`,
+      message: () =>
+        has
+          ? `Expected vscode mock not to have command ${id}`
+          : `Expected vscode mock to have command ${id}, got [${received.state.getRegisteredCommands().join(', ')}]`,
     }
   },
   // toHaveExecutedCommand, toHaveContextKey, etc.
@@ -757,6 +748,7 @@ export const deactivate = mod.deactivate
 ```
 
 Generator:
+
 1. Detects mode from `package.json`
 2. Writes the appropriate bootstrap file at `${consumerRoot}/bootstrap.{cjs,mjs}`
 3. If `package.json.main` is not pointing at the bootstrap, updates it (warn user first)
@@ -778,14 +770,14 @@ Idempotent — re-running produces identical output if state is correct; otherwi
 
 Subcommands per §14 of the original spec. First line of the compiled output must be `#!/usr/bin/env bun` shebang — set via esbuild-like banner or post-processing step.
 
-| Subcommand | Behavior |
-|---|---|
-| `vsv dev` | Load manifest, run codegen, emit bootstrap, watch for changes. Ctrl+C to exit. |
-| `vsv test` | `bun test src tests` in consumer's project |
-| `vsv lint` | `oxlint --type-aware --deny-warnings` in consumer |
-| `vsv typecheck` | `tsgo` in consumer |
-| `vsv check` | Sequence: lint → typecheck → test |
-| `vsv discover` | Print instructions (v1 stub — just a markdown block explaining how to manually dump `vscode.commands.getCommands()` from an extension dev host) |
+| Subcommand      | Behavior                                                                                                                                        |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vsv dev`       | Load manifest, run codegen, emit bootstrap, watch for changes. Ctrl+C to exit.                                                                  |
+| `vsv test`      | `bun test src tests` in consumer's project                                                                                                      |
+| `vsv lint`      | `oxlint --type-aware --deny-warnings` in consumer                                                                                               |
+| `vsv typecheck` | `tsgo` in consumer                                                                                                                              |
+| `vsv check`     | Sequence: lint → typecheck → test                                                                                                               |
+| `vsv discover`  | Print instructions (v1 stub — just a markdown block explaining how to manually dump `vscode.commands.getCommands()` from an extension dev host) |
 
 For `vsv dev`, the watch loop uses Bun's native `fs.watch` (same API as Node but faster). Do not add a dependency like `chokidar`. See §10.6 for the broader Bun-native API preference.
 
@@ -959,11 +951,13 @@ vsv --help
 ### Phase 11: Final verification gauntlet
 
 Run in vsv repo:
+
 ```bash
 bun run check
 ```
 
 All of the following must be green:
+
 - `check:format` (oxfmt)
 - `check:lint` (oxlint --type-aware)
 - `check:types` (tsgo)
