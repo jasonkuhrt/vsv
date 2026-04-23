@@ -135,7 +135,7 @@
       }
     },
     {
-      "files": ["src/lib/codegen/**/*.ts"],
+      "files": ["src/lib/codegen/**/*.ts", "src/lib/loader-hook/**/*.ts"],
       "rules": {
         "typescript/no-unsafe-type-assertion": "off"
       }
