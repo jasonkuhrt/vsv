@@ -56,7 +56,12 @@
     {
       "files": ["src/**/*.ts", "src/**/*.tsx", "scripts/**/*.ts", "scripts/**/*.tsx"],
       "rules": {
-        "import/no-nodejs-modules": "error",
+        "import/no-nodejs-modules": [
+          "error",
+          {
+            "allow": ["node:path", "node:url", "node:module", "node:fs", "node:fs/promises"]
+          }
+        ],
         "eslint/no-restricted-imports": [
           "error",
           {
@@ -127,6 +132,12 @@
         "typescript/no-unsafe-type-assertion": "off",
         "typescript/no-unnecessary-type-parameters": "off",
         "typescript/no-base-to-string": "off"
+      }
+    },
+    {
+      "files": ["src/lib/codegen/**/*.ts"],
+      "rules": {
+        "typescript/no-unsafe-type-assertion": "off"
       }
     }
   ],
