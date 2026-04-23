@@ -110,7 +110,7 @@ describe('createRuntime', () => {
         ConfigRegistryShape,
         StateRegistry
       >()
-      const ctx = createTestExtensionContext() as unknown as import('vscode').ExtensionContext
+      const ctx = createTestExtensionContext()
       const handle = r.defineState(ctx, 'lastRun', 'global')
       expect(handle.get()).toBeUndefined()
       await handle.set(1234)

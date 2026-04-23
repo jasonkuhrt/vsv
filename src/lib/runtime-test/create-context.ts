@@ -1,11 +1,8 @@
-interface MockMemento {
-  get<T>(key: string): T | undefined
-  get<T>(key: string, defaultValue: T): T
-  update(key: string, value: unknown): Promise<void>
-  keys(): readonly string[]
-}
+import type { ExtensionContext, Memento } from 'vscode'
 
-const createMockMemento = (): MockMemento => {
+type MementoWithSync = Memento & { setKeysForSync: (keys: readonly string[]) => void }
+
+const createMockMemento = (): MementoWithSync => {
   const store = new Map<string, unknown>()
   function get<T>(key: string): T | undefined
   function get<T>(key: string, defaultValue: T): T
@@ -13,38 +10,31 @@ const createMockMemento = (): MockMemento => {
     if (store.has(key)) return store.get(key) as T
     return defaultValue
   }
-  return {
+  const memento: MementoWithSync = {
     get,
     update: async (key: string, value: unknown): Promise<void> => {
       store.set(key, value)
     },
     keys: (): readonly string[] => Array.from(store.keys()),
+    setKeysForSync: (): void => {},
   }
+  return memento
 }
 
 export interface TestExtensionContext {
   subscriptions: Array<{ dispose: () => void }>
-  globalState: MockMemento
-  workspaceState: MockMemento
+  globalState: Memento
+  workspaceState: Memento
   extensionUri: { fsPath: string; toString: () => string }
   extensionPath: string
   storageUri: { fsPath: string; toString: () => string }
   globalStorageUri: { fsPath: string; toString: () => string }
   logUri: { fsPath: string; toString: () => string }
-  environmentVariableCollection: {
-    replace: (variable: string, value: string) => void
-    append: (variable: string, value: string) => void
-    prepend: (variable: string, value: string) => void
-    get: (variable: string) => unknown
-    forEach: (callback: (variable: string, mutator: unknown) => void) => void
-    delete: (variable: string) => void
-    clear: () => void
-  }
 }
 
-export const createTestExtensionContext = (): TestExtensionContext => {
-  return {
-    subscriptions: [],
+export const createTestExtensionContext = (): ExtensionContext & TestExtensionContext => {
+  const mock = {
+    subscriptions: [] as Array<{ dispose: () => void }>,
     globalState: createMockMemento(),
     workspaceState: createMockMemento(),
     extensionUri: { fsPath: '/test', toString: () => 'file:///test' },
@@ -56,13 +46,23 @@ export const createTestExtensionContext = (): TestExtensionContext => {
     },
     logUri: { fsPath: '/test/log', toString: () => 'file:///test/log' },
     environmentVariableCollection: {
-      replace: () => {},
-      append: () => {},
-      prepend: () => {},
-      get: () => undefined,
-      forEach: () => {},
-      delete: () => {},
-      clear: () => {},
+      persistent: true,
+      description: undefined,
+      replace: (): void => {},
+      append: (): void => {},
+      prepend: (): void => {},
+      get: (): undefined => undefined,
+      forEach: (): void => {},
+      delete: (): void => {},
+      clear: (): void => {},
+      getScoped: (): unknown => ({}),
+      [Symbol.iterator]: function* (): Iterator<[string, unknown]> {},
     },
+    asAbsolutePath: (relativePath: string): string => `/test/${relativePath}`,
+    extensionMode: 2,
+    storagePath: '/test/storage',
+    globalStoragePath: '/test/globalStorage',
+    logPath: '/test/log',
   }
+  return mock as unknown as ExtensionContext & TestExtensionContext
 }

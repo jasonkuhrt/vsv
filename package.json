@@ -28,7 +28,14 @@
     "COLDSTART.md"
   ],
   "type": "module",
-  "sideEffects": false,
+  "sideEffects": [
+    "./build/exports/runtime-test.js",
+    "./build/lib/runtime-test/install-mock.js",
+    "./build/lib/runtime-test/preload.js",
+    "./src/exports/runtime-test.ts",
+    "./src/lib/runtime-test/install-mock.ts",
+    "./src/lib/runtime-test/preload.ts"
+  ],
   "imports": {
     "#lib/*": "./src/lib/*.ts"
   },
@@ -57,8 +64,6 @@
     "check:exports": "attw --pack . --profile esm-only"
   },
   "dependencies": {
-    "@effect/platform": "^0.94.5",
-    "@effect/platform-node": "^0.104.1",
     "effect": "^3.19.19"
   },
   "devDependencies": {
