@@ -1,6 +1,8 @@
 import { mock } from 'bun:test'
 import * as vscodeMock from './vscode-mock.ts'
 
+void mock.module('vscode', () => vscodeMock)
+
 export interface InstalledMock {
   reset: () => void
   state: typeof vscodeMock.__state
