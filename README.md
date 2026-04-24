@@ -72,7 +72,7 @@ Because Bun resolves static imports before any test-file top-level code runs, th
 
 ```toml
 [test]
-preload = ["./node_modules/@jasonkuhrt/vsv/src/lib/runtime-test/preload.ts"]
+preload = ["@jasonkuhrt/vsv/runtime/test/preload"]
 ```
 
 Then a test looks like:
