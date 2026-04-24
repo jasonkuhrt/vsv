@@ -41,12 +41,22 @@ describe('cjsBootstrap', () => {
 })
 
 describe('esmBootstrap', () => {
-  test('emits register(tsx/esm) plus dynamic import', () => {
+  test('emits register() via tsx/esm/api plus dynamic import', () => {
     const out = esmBootstrap('src/extension.ts')
-    expect(out).toContain("register('tsx/esm'")
+    expect(out).toContain("from 'tsx/esm/api'")
+    expect(out).toContain('register()')
     expect(out).toContain('"./src/extension.ts"')
     expect(out).toContain('export const activate')
     expect(out).toContain('export const deactivate')
+  })
+
+  test('does NOT use the deprecated node:module register(tsx/esm, url) pattern', () => {
+    // Regression guard: the old pattern throws under Node 22+ with
+    // "tsx must be loaded with --import instead of --loader"
+    const out = esmBootstrap('src/extension.ts')
+    expect(out).not.toContain("from 'node:module'")
+    expect(out).not.toContain("register('tsx/esm'")
+    expect(out).not.toContain('pathToFileURL')
   })
 })
 
@@ -106,5 +116,55 @@ describe('generateBootstrap', () => {
     const r2 = await generateBootstrap({ consumerRoot })
     const second = await Bun.file(r2.bootstrapPath).text()
     expect(first).toBe(second)
+  })
+
+  // Regression: the emitted ESM bootstrap must actually boot under Node's
+  // current ESM runtime without the deprecated --loader pattern. If vsv
+  // ever regresses the tsx API it uses, this test catches it in CI rather
+  // than at an extension author's F5 attempt.
+  test('emitted ESM bootstrap boots successfully under node', async () => {
+    // consumer: type=module + minimal src/extension.ts
+    await Bun.write(
+      path.join(consumerRoot, 'package.json'),
+      JSON.stringify({ name: 'ext', type: 'module' }),
+    )
+    await fs.mkdir(path.join(consumerRoot, 'src'), { recursive: true })
+    await Bun.write(
+      path.join(consumerRoot, 'src/extension.ts'),
+      `export const activate = (_ctx: unknown) => 'ok'\nexport const deactivate = () => {}\n`,
+    )
+
+    // Symlink vsv's own node_modules into the consumer so `import 'tsx/esm/api'` resolves.
+    // path.resolve from this test file up to the vsv repo root.
+    const vsvRoot = path.resolve(import.meta.dir, '../../../..')
+    await fs.symlink(
+      path.join(vsvRoot, 'node_modules'),
+      path.join(consumerRoot, 'node_modules'),
+      'dir',
+    )
+
+    await generateBootstrap({ consumerRoot })
+
+    const proc = Bun.spawn({
+      cmd: [
+        'node',
+        '--input-type=module',
+        '-e',
+        `const m = await import("./bootstrap.mjs"); process.stdout.write(typeof m.activate);`,
+      ],
+      cwd: consumerRoot,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const stdout = await new Response(proc.stdout).text()
+    const stderr = await new Response(proc.stderr).text()
+    const exitCode = await proc.exited
+
+    // Tolerate unrelated Node ExperimentalWarning lines on stderr — fail only
+    // on genuine errors like the old "tsx must be loaded with --import" throw.
+    if (exitCode !== 0) {
+      throw new Error(`bootstrap failed to boot\nexit=${exitCode}\nstderr:\n${stderr}`)
+    }
+    expect(stdout).toContain('function')
   })
 })

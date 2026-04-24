@@ -14,21 +14,38 @@ It provides:
 
 ## Installing
 
-Distributed via `bun link` — not published to npm. From this repo:
+Not published to npm. Consume from a local checkout via a **file path** install:
 
 ```bash
-bun link                         # register @jasonkuhrt/vsv globally
+# One-time: the CLI still registers globally for ergonomic `vsv` invocation.
+cd /path/to/vsv
+bun link
 ```
 
 In a consumer extension repo:
 
 ```bash
-bun link @jasonkuhrt/vsv         # create the link
-bun add effect                   # required — bun link does not install transitive deps
-bun add -d tsx                   # required for the generated extension loader bootstrap
+# Install vsv's source physically into node_modules (NOT a symlink).
+bun add file:/absolute/path/to/vsv
+
+# Also install the transitive deps vsv cannot bundle for you.
+bun add effect                   # required — Schema is not re-exported
+bun add -d tsx                   # required at runtime by the generated bootstrap
 ```
 
-`bun link` only installs the linked package itself, not transitive dependencies. `effect` is needed at runtime for `Schema`; `tsx` is required at runtime by the generated `bootstrap.{cjs,mjs}` VSCode loader file.
+### Why `bun add file:` — not `bun link`
+
+VSCode's extension host only resolves `require('vscode')` for files physically inside the registered extension directory. A `bun link` symlink points `node_modules/@jasonkuhrt/vsv` at the real vsv checkout (outside the extension), so vsv's compiled runtime calls `require('vscode')` from a path the host refuses to map, and `createRuntime()` resolves against a broken `vscode` object.
+
+`bun add file:` physically copies vsv into `node_modules/@jasonkuhrt/vsv/`, which lives inside the extension directory — the host maps it correctly and everything Just Works.
+
+After vsv changes, re-sync in the consumer:
+
+```bash
+bun add file:/absolute/path/to/vsv --force
+```
+
+(Consider scripting this as `sync-vsv` in consumer `package.json`.)
 
 ## Imports
 
