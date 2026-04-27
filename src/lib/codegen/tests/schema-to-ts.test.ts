@@ -19,8 +19,8 @@ describe('schemaToTs', () => {
     expect(schemaToTs(Schema.Null)).toBe('null')
   })
 
-  test('array', () => {
-    expect(schemaToTs(Schema.Array(Schema.String))).toBe('Array<string>')
+  test('array emits ReadonlyArray (Schema.Array is readonly at the type level)', () => {
+    expect(schemaToTs(Schema.Array(Schema.String))).toBe('ReadonlyArray<string>')
   })
 
   test('struct emits indented object literal', () => {

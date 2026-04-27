@@ -34,7 +34,10 @@ const emitNode = (ast: SchemaAST.AST, indent: string, depth: number): string => 
     const firstRest = ast.rest[0]
     if (firstRest !== undefined && ast.elements.length === 0) {
       const elementType = emitNode(firstRest.type, indent, depth)
-      return `Array<${elementType}>`
+      // `Schema.Array(...)` produces `ReadonlyArray<...>` at the Effect type
+      // level — emitting `Array<...>` here would silently widen the consumer
+      // type to allow mutation that the schema disallows.
+      return `ReadonlyArray<${elementType}>`
     }
     const parts = ast.elements.map((e) => emitNode(e.type, indent, depth))
     return `[${parts.join(', ')}]`

@@ -118,6 +118,31 @@ describe('createRuntime', () => {
       await handle.delete()
       expect(handle.get()).toBeUndefined()
     })
+
+    test('getWithDefault returns defaultValue when key is missing', () => {
+      const r = createRuntime<
+        CommandRegistryShape,
+        ContextKeyRegistryShape,
+        ConfigRegistryShape,
+        StateRegistry
+      >()
+      const ctx = createTestExtensionContext()
+      const handle = r.defineState(ctx, 'lastRun', 'global')
+      expect(handle.getWithDefault(0)).toBe(0)
+    })
+
+    test('getWithDefault returns stored value when key is set', async () => {
+      const r = createRuntime<
+        CommandRegistryShape,
+        ContextKeyRegistryShape,
+        ConfigRegistryShape,
+        StateRegistry
+      >()
+      const ctx = createTestExtensionContext()
+      const handle = r.defineState(ctx, 'lastRun', 'global')
+      await handle.set(7)
+      expect(handle.getWithDefault(0)).toBe(7)
+    })
   })
 
   describe('defineEvent', () => {
