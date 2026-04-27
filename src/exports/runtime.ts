@@ -7,8 +7,11 @@ export type {
   ContextKeyRegistryShape,
   EventHandle,
   EventRegistryShape,
+  NotifyHandle,
+  PromptOptions,
   QuickPickItem,
   Runtime,
+  StatusBarHandle,
   StateHandle,
   StateRegistryShape,
 } from '#lib/runtime/create'

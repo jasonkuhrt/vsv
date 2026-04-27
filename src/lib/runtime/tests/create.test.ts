@@ -184,6 +184,72 @@ describe('createRuntime', () => {
     })
   })
 
+  describe('notify', () => {
+    test('info records a message at the info level', async () => {
+      const r = createRuntime()
+      await r.notify.info('hello')
+      const msgs = vscode.state.getShownMessages()
+      expect(msgs).toEqual([{ level: 'info', message: 'hello' }])
+    })
+
+    test('warn records at the warn level', async () => {
+      const r = createRuntime()
+      await r.notify.warn('careful')
+      expect(vscode.state.getShownMessages()).toEqual([{ level: 'warn', message: 'careful' }])
+    })
+
+    test('error records at the error level', async () => {
+      const r = createRuntime()
+      await r.notify.error('boom')
+      expect(vscode.state.getShownMessages()).toEqual([{ level: 'error', message: 'boom' }])
+    })
+
+    test('prompt forwards options and returns the seeded input', async () => {
+      const r = createRuntime()
+      vscode.state.setNextInputBoxResult('typed-value')
+      const result = await r.notify.prompt({
+        prompt: 'enter something',
+        value: 'pre-filled',
+        valueSelection: [0, 11],
+      })
+      expect(result).toBe('typed-value')
+      const recorded = vscode.state.getShownInputBoxes()
+      expect(recorded).toHaveLength(1)
+      const opts = recorded[0]?.options as {
+        prompt: string
+        value: string
+        valueSelection: [number, number]
+      }
+      expect(opts.prompt).toBe('enter something')
+      expect(opts.value).toBe('pre-filled')
+      expect(opts.valueSelection).toEqual([0, 11])
+    })
+
+    test('prompt returns undefined when dismissed', async () => {
+      const r = createRuntime()
+      vscode.state.setNextInputBoxResult(undefined)
+      const result = await r.notify.prompt({ prompt: 'enter' })
+      expect(result).toBeUndefined()
+    })
+  })
+
+  describe('statusBar', () => {
+    test('message records a status bar message with the default timeout', () => {
+      const r = createRuntime()
+      r.statusBar.message('hello')
+      const msgs = vscode.state.getStatusBarMessages()
+      expect(msgs).toEqual([{ message: 'hello', hideAfterTimeout: 1500 }])
+    })
+
+    test('message respects an explicit timeout', () => {
+      const r = createRuntime()
+      r.statusBar.message('hello', 5000)
+      expect(vscode.state.getStatusBarMessages()).toEqual([
+        { message: 'hello', hideAfterTimeout: 5000 },
+      ])
+    })
+  })
+
   describe('disposables', () => {
     test('dispose() disposes all members', () => {
       const r = createRuntime()

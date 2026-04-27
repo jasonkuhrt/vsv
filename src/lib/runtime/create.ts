@@ -120,6 +120,70 @@ export interface QuickPickItem<T> {
 }
 
 /**
+ * Options for `runtime.notify.prompt`. Maps to a subset of VSCode's
+ * `InputBoxOptions` — the subset that's actually useful for keyboard-driven
+ * extension prompts (no validation callback yet; call `vscode.window.showInputBox`
+ * directly if you need that until vsv exposes it).
+ */
+export interface PromptOptions {
+  /** Prompt text shown above the input field. */
+  prompt: string
+  /** Pre-filled input value. */
+  value?: string
+  /**
+   * `[start, end]` selection range within the pre-filled value. Use `[0, value.length]`
+   * to select the whole pre-fill so the user can overwrite by typing.
+   */
+  valueSelection?: [number, number]
+  /** Greyed-out hint shown when the input is empty. */
+  placeHolder?: string
+  /** Mask the input as a password. */
+  password?: boolean
+}
+
+/**
+ * User-facing notification surface. Wraps `vscode.window.show{Information,
+ * Warning,Error}Message` and `showInputBox` with a single discoverable
+ * namespace.
+ *
+ * All four methods are non-blocking from the user's perspective — they
+ * return promises that resolve when the notification is dismissed. For
+ * `info`/`warn`/`error`, the resolved value is the action button label
+ * the user clicked, or `undefined` if dismissed without action.
+ *
+ * Future: button overloads for action-bearing notifications, modal vs
+ * non-modal flag.
+ */
+export interface NotifyHandle {
+  /** Show a non-blocking informational message. Bottom-right toast. */
+  info: (text: string) => Promise<string | undefined>
+  /** Show a non-blocking warning message. Bottom-right toast with warning icon. */
+  warn: (text: string) => Promise<string | undefined>
+  /** Show a non-blocking error message. Bottom-right toast with error icon. */
+  error: (text: string) => Promise<string | undefined>
+  /**
+   * Show an input box at the top of the window. Returns the entered text,
+   * or `undefined` if the user dismissed without confirming.
+   */
+  prompt: (options: PromptOptions) => Promise<string | undefined>
+}
+
+/**
+ * Status bar surface. Currently exposes transient messaging at the
+ * bottom-left status area; persistent items (priority, alignment, command
+ * binding) will land here when a consumer needs them.
+ */
+export interface StatusBarHandle {
+  /**
+   * Show a transient message in the status bar, auto-clearing after
+   * `timeoutMs` (default 1500). Use for command success/failure feedback
+   * — anything more than ~3 seconds belongs in a notification, not the
+   * status bar.
+   */
+  message: (text: string, timeoutMs?: number) => void
+}
+
+/**
  * Typed runtime surface for a vsv-managed extension. Created via
  * `createRuntime<CR, CKR, CFR, SR, ER>()` where each generic corresponds to
  * a generated `*Registry` type. Methods are indexed by the registries so
@@ -204,6 +268,19 @@ export interface Runtime<
     items: ReadonlyArray<QuickPickItem<T>>,
     options?: { placeHolder?: string; canPickMany?: false },
   ) => Promise<T | undefined>
+
+  /**
+   * User-facing notifications — info/warn/error toasts and modal input
+   * prompt. Closes the gap left by raw `vscode.window.show*Message` /
+   * `showInputBox` calls scattered through extension code.
+   */
+  notify: NotifyHandle
+
+  /**
+   * Status bar messaging. Replaces raw `vscode.window.setStatusBarMessage`
+   * calls with a discoverable namespace.
+   */
+  statusBar: StatusBarHandle
 
   /**
    * Combine multiple disposables into one. Equivalent to
@@ -347,6 +424,32 @@ export const createRuntime = <
     if (picked === undefined) return undefined
     const match = items.find((i) => i.label === picked.label)
     return match?.value
+  },
+
+  notify: {
+    info: async (text: string): Promise<string | undefined> =>
+      vscode.window.showInformationMessage(text),
+    warn: async (text: string): Promise<string | undefined> =>
+      vscode.window.showWarningMessage(text),
+    error: async (text: string): Promise<string | undefined> =>
+      vscode.window.showErrorMessage(text),
+    prompt: async (options: PromptOptions): Promise<string | undefined> => {
+      // Build the vscode-shaped options object incrementally — passing
+      // `undefined` values explicitly trips strict optional-property checks
+      // on `vscode.InputBoxOptions`.
+      const vscodeOpts: vscode.InputBoxOptions = { prompt: options.prompt }
+      if (options.value !== undefined) vscodeOpts.value = options.value
+      if (options.valueSelection !== undefined) vscodeOpts.valueSelection = options.valueSelection
+      if (options.placeHolder !== undefined) vscodeOpts.placeHolder = options.placeHolder
+      if (options.password !== undefined) vscodeOpts.password = options.password
+      return vscode.window.showInputBox(vscodeOpts)
+    },
+  },
+
+  statusBar: {
+    message: (text: string, timeoutMs: number = 1500): void => {
+      vscode.window.setStatusBarMessage(text, timeoutMs)
+    },
   },
 
   disposables: (...ds: Array<{ dispose: () => void }>): vscode.Disposable =>
