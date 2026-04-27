@@ -28,9 +28,9 @@ export const mergeManifestIntoPackageJson = (
   const result: JsonObject = { ...existingPackageJson }
 
   result['name'] = manifest.name
+  result['publisher'] = manifest.publisher
   if (manifest.displayName !== undefined) result['displayName'] = manifest.displayName
   if (manifest.description !== undefined) result['description'] = manifest.description
-  if (manifest.publisher !== undefined) result['publisher'] = manifest.publisher
   if (manifest.version !== undefined) result['version'] = manifest.version
 
   if (manifest.engineVscode !== undefined) {

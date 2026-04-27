@@ -11,7 +11,7 @@ import { emitRegistries } from '../emit-registries.ts'
 
 describe('emitRegistries', () => {
   test('empty manifest emits empty registries with header', () => {
-    const m = Manifest.make({ name: 'empty-ext' })
+    const m = Manifest.make({ name: 'empty-ext', publisher: 'jasonkuhrt' })
     const out = emitRegistries(m)
     expect(out).toContain('// GENERATED')
     expect(out).toContain('export type CommandRegistry = {')
@@ -23,6 +23,7 @@ describe('emitRegistries', () => {
   test('emits command entries with args and result types', () => {
     const m = Manifest.make({
       name: 'ext',
+      publisher: 'jasonkuhrt',
       commands: [
         CommandDecl.make({
           id: 'ext.greet',
@@ -40,6 +41,7 @@ describe('emitRegistries', () => {
   test('emits context keys', () => {
     const m = Manifest.make({
       name: 'ext',
+      publisher: 'jasonkuhrt',
       contextKeys: [
         ContextKeyDecl.make({
           name: 'ext.active',
@@ -54,6 +56,7 @@ describe('emitRegistries', () => {
   test('emits config entries', () => {
     const m = Manifest.make({
       name: 'ext',
+      publisher: 'jasonkuhrt',
       config: [
         ConfigDecl.make({
           key: 'ext.enabled',
@@ -68,6 +71,7 @@ describe('emitRegistries', () => {
   test('emits state entries with scope', () => {
     const m = Manifest.make({
       name: 'ext',
+      publisher: 'jasonkuhrt',
       state: [
         StateDecl.make({
           key: 'ext.lastRun',

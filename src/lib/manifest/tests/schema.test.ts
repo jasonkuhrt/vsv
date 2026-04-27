@@ -4,9 +4,10 @@ import { CommandDecl, Manifest } from '../schema.ts'
 
 describe('Manifest', () => {
   test('constructs via .make with minimal fields', () => {
-    const m = Manifest.make({ name: 'my-ext' })
+    const m = Manifest.make({ name: 'my-ext', publisher: 'jasonkuhrt' })
     expect(m._tag).toBe('Manifest')
     expect(m.name).toBe('my-ext')
+    expect(m.publisher).toBe('jasonkuhrt')
     expect(m.displayName).toBeUndefined()
     expect(m.commands).toBeUndefined()
   })
@@ -39,17 +40,20 @@ describe('Manifest', () => {
     const raw = {
       _tag: 'Manifest',
       name: 'decoded-ext',
+      publisher: 'jasonkuhrt',
       displayName: 'Decoded',
     }
     const decoded = Schema.decodeUnknownSync(Manifest)(raw)
     expect(decoded._tag).toBe('Manifest')
     expect(decoded.name).toBe('decoded-ext')
+    expect(decoded.publisher).toBe('jasonkuhrt')
     expect(decoded.displayName).toBe('Decoded')
   })
 
   test('round-trip: encode then decode', () => {
     const original = Manifest.make({
       name: 'roundtrip',
+      publisher: 'jasonkuhrt',
       description: 'test',
     })
     const encoded = Schema.encodeSync(Manifest)(original)
@@ -61,6 +65,22 @@ describe('Manifest', () => {
 
   test('rejects missing required fields', () => {
     expect(() => Schema.decodeUnknownSync(Manifest)({ _tag: 'Manifest' })).toThrow()
+  })
+
+  test('rejects missing publisher', () => {
+    expect(() =>
+      Schema.decodeUnknownSync(Manifest)({ _tag: 'Manifest', name: 'no-pub' }),
+    ).toThrow()
+  })
+
+  test('rejects empty publisher', () => {
+    expect(() =>
+      Schema.decodeUnknownSync(Manifest)({
+        _tag: 'Manifest',
+        name: 'ext',
+        publisher: '',
+      }),
+    ).toThrow()
   })
 
   test('rejects empty name (NonEmptyTrimmedString)', () => {

@@ -5,7 +5,7 @@ import { mergeManifestIntoPackageJson } from '../sync-package-json.ts'
 
 describe('mergeManifestIntoPackageJson', () => {
   test('preserves unrelated fields (scripts, dependencies)', () => {
-    const m = Manifest.make({ name: 'ext' })
+    const m = Manifest.make({ name: 'ext', publisher: 'jasonkuhrt' })
     const existing = {
       name: 'old-name',
       scripts: { test: 'bun test' },
@@ -18,7 +18,7 @@ describe('mergeManifestIntoPackageJson', () => {
   })
 
   test('updates engines.vscode without clobbering other engines', () => {
-    const m = Manifest.make({ name: 'ext', engineVscode: '^1.90.0' })
+    const m = Manifest.make({ name: 'ext', publisher: 'jasonkuhrt', engineVscode: '^1.90.0' })
     const existing = { engines: { node: '>=18', vscode: '^1.80.0' } }
     const merged = mergeManifestIntoPackageJson(m, existing)
     expect(merged['engines']).toEqual({ node: '>=18', vscode: '^1.90.0' })
@@ -27,6 +27,7 @@ describe('mergeManifestIntoPackageJson', () => {
   test('emits contributes.commands from manifest.commands', () => {
     const m = Manifest.make({
       name: 'ext',
+      publisher: 'jasonkuhrt',
       commands: [
         CommandDecl.make({
           id: 'ext.foo',
@@ -45,6 +46,7 @@ describe('mergeManifestIntoPackageJson', () => {
   test('emits contributes.configuration as JSON Schema', () => {
     const m = Manifest.make({
       name: 'ext',
+      publisher: 'jasonkuhrt',
       config: [
         ConfigDecl.make({
           key: 'ext.enabled',
@@ -64,14 +66,14 @@ describe('mergeManifestIntoPackageJson', () => {
   })
 
   test('manifest name wins over existing package.json name', () => {
-    const m = Manifest.make({ name: 'new-name' })
+    const m = Manifest.make({ name: 'new-name', publisher: 'jasonkuhrt' })
     const existing = { name: 'old-name' }
     const merged = mergeManifestIntoPackageJson(m, existing)
     expect(merged['name']).toBe('new-name')
   })
 
   test('does not touch main/exports/bin', () => {
-    const m = Manifest.make({ name: 'ext' })
+    const m = Manifest.make({ name: 'ext', publisher: 'jasonkuhrt' })
     const existing = {
       main: './out/extension.js',
       bin: { ext: './bin/cli.js' },

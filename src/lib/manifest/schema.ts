@@ -150,8 +150,12 @@ export class StateDecl extends Schema.TaggedClass<StateDecl>()('StateDecl', {
  * - `name` — extension name (matches `package.json#name`).
  * - `displayName`, `description` — user-facing strings shown in the
  *   marketplace and Extensions view.
- * - `publisher`, `version`, `engineVscode` — standard `package.json` fields,
- *   replicated here so codegen has the values when emitting `package.json`.
+ * - `publisher` — required. Without it, VSCode registers the extension as
+ *   `undefined_publisher.<name>`, which surfaces as a misleading id in the
+ *   Extensions view, command logs, and any code that filters by extension id.
+ *   Costs nothing to declare; vsv refuses to codegen without it.
+ * - `version`, `engineVscode` — standard `package.json` fields, replicated
+ *   here so codegen has the values when emitting `package.json`.
  * - `activationEvents` — VS Code activation events (e.g. `'onStartupFinished'`,
  *   `'onCommand:myExt.doThing'`). Empty array means "implicit" activation
  *   based on declared contributions.
@@ -165,7 +169,7 @@ export class Manifest extends Schema.TaggedClass<Manifest>()('Manifest', {
   name: Schema.NonEmptyTrimmedString,
   displayName: Schema.optional(Schema.String),
   description: Schema.optional(Schema.String),
-  publisher: Schema.optional(Schema.String),
+  publisher: Schema.NonEmptyTrimmedString,
   version: Schema.optional(Schema.String),
   engineVscode: Schema.optional(Schema.String),
   activationEvents: Schema.optional(Schema.Array(Schema.String)),
