@@ -116,23 +116,14 @@ Need: a sibling primitive (e.g. `defineForeignConfig` or
 contribution. Should be backed by a `ForeignConfigDecl` in the manifest so
 the type lives there, not at the call site.
 
-### Notifications + status bar
+### Notifications + status bar — RESOLVED 2026-04-27
 
-Used pervasively across consumers:
+Closed by `rt.notify.{info, warn, error, prompt}` and `rt.statusBar.message`.
+All 19 call sites in `vscode-utils` migrated. See commit history.
 
-- `vscode.window.setStatusBarMessage(msg, timeout)` — every command emits
-  status messages on success and failure. ~20 call sites in `vscode-utils`
-  alone.
-- `vscode.window.showInformationMessage`
-- `vscode.window.showWarningMessage`
-- `vscode.window.showErrorMessage`
-- `vscode.window.showInputBox` — currently used by `renameTight`; partial
-  coverage already exists via `quickPick`.
-
-Need: a `notifications` namespace on `Runtime` (or a top-level export)
-covering all five surfaces. Status bar specifically deserves a typed builder
-for persistent items (priority, alignment, command binding) — not just
-transient messages.
+**Still deferred:** persistent status bar items (priority, alignment,
+command binding) — not yet needed by any consumer. Land when first consumer
+asks.
 
 ### Editor + document surface
 
