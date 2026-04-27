@@ -31,6 +31,21 @@ Each entry documents a real consumer extension migrated from raw `vscode.command
   - `eslint/no-await-in-loop` disabled for this extension: `stripAliasesInFiles` is intentionally sequential for failure isolation. See DEVIATIONS for the rationale.
   - See `vscode-utils/DEVIATIONS.md` for the full per-phase log.
 
+## workbench-cycler
+
+- **Migrated:** 2026-04-27
+- **Commit:** `3c681d3` (publisher fix; the manifest scaffolding predates this entry)
+- **Rollback tag:** _(none — extension was already on vsv before MIGRATIONS.md was created)_
+- **Commands migrated:** `workbenchCycler.applyPreset`, `workbenchCycler.nextInSequence`
+- **Context keys migrated:** `workbenchCycler.currentPreset`
+- **External commands declared:** _(none — 12 raw `vscode.commands.executeCommand` calls into VSCode core remain pending typed external command support; see `TODO.md` gap #1)_
+- **Notes:**
+  - Already on vsv when this index was authored — was retroactively documented after a publisher gap surfaced.
+  - The original manifest omitted `publisher`, so VSCode registered the extension as `undefined_publisher.workbench-cycler`. Fixed by declaring `publisher: 'jasonkuhrt'` + explicit `version` in `vsv.manifest.ts`.
+  - First consumer to exercise `defineContextKey` end-to-end — the `workbenchCycler.currentPreset` key is read in keybindings to discriminate the next-in-sequence direction (forward/reverse via two binding entries).
+  - First consumer to use `Schema.Array(...)` in a command arg schema. After the upstream fix to `schemaToTs`, the generated `sequence` parameter type tightened from mutable `Array<...>` to `ReadonlyArray<...>`. The consumer was already treating the array as readonly; no call-site changes.
+  - Probes 12 VSCode core commands not yet declared in any extension's manifest (`workbench.action.{closePanel, toggleMaximizedAuxiliaryBar, closeSidebar, terminal.focus, closeAuxiliaryBar}`, `workbench.files.action.focusFilesExplorer`). When `executeExternalCommand` lands (gap #1), this is the highest-volume consumer of foreign commands and the natural seed for `built-in-catalog/commands.ts`.
+
 ---
 
 ## Cross-cutting follow-ups for vsv
