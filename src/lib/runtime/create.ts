@@ -169,6 +169,96 @@ export interface NotifyHandle {
 }
 
 /**
+ * System clipboard. Wraps `vscode.env.clipboard`. Both methods are async
+ * because OS clipboard access goes through async IPC under the hood.
+ *
+ * Common pattern: snapshot/restore for clipboard-roundtrip workarounds
+ * (e.g. invoking a built-in command that places focused-resource info on
+ * the clipboard, then reading it without disturbing the user's copy).
+ */
+export interface ClipboardHandle {
+  /** Read the current clipboard text contents. Empty string if clipboard is non-text. */
+  readText: () => Promise<string>
+  /** Replace the clipboard text contents. Does not preserve previous content. */
+  writeText: (text: string) => Promise<void>
+}
+
+/**
+ * Workspace surface — folders, edits, document IO. Filesystem read/write
+ * lives separately on `Runtime.fs`.
+ */
+export interface WorkspaceHandle {
+  /**
+   * Current workspace folders, or `undefined` when no folder is open
+   * (single-file mode). Readonly snapshot — the array is `undefined` vs
+   * empty array follows VSCode's own convention: empty workspace ≠ no
+   * workspace.
+   */
+  readonly folders: readonly vscode.WorkspaceFolder[] | undefined
+  /**
+   * Subscribe to workspace folder add/remove events. Returns a disposable.
+   */
+  onDidChangeFolders: (
+    cb: (e: vscode.WorkspaceFoldersChangeEvent) => void,
+  ) => vscode.Disposable
+  /**
+   * Open a text document by URI or filesystem path. Returns the
+   * `TextDocument` (cached if already open). Use this to load file
+   * contents for inspection or editing without showing the document in
+   * the editor.
+   */
+  openTextDocument: (target: vscode.Uri | string) => Promise<vscode.TextDocument>
+  /**
+   * Apply a `WorkspaceEdit` to the workspace. Returns `true` if the edit
+   * applied cleanly. Construct edits with `new WorkspaceEdit()` (re-exported
+   * from `@jasonkuhrt/vsv/runtime`).
+   */
+  applyEdit: (edit: vscode.WorkspaceEdit) => Promise<boolean>
+}
+
+/**
+ * Filesystem operations. Wraps `vscode.workspace.fs` — works against any
+ * registered file system provider (local, virtual, remote), not just the
+ * local OS. Errors throw as `vscode.FileSystemError` instances; consumers
+ * typically `try/catch` per-operation.
+ */
+export interface FsHandle {
+  /**
+   * List the entries of a directory. Returns `[name, type]` tuples
+   * directly from VSCode — no filtering or sort applied.
+   */
+  readDirectory: (uri: vscode.Uri) => Promise<ReadonlyArray<[string, vscode.FileType]>>
+  /** Stat a file or directory. Throws if the path doesn't exist. */
+  stat: (uri: vscode.Uri) => Promise<vscode.FileStat>
+}
+
+/**
+ * Active text editor accessor. The editor is `undefined` when focus is on
+ * a non-text view (terminal, output, settings, etc.) or no editor exists.
+ */
+export interface EditorHandle {
+  /** Currently focused text editor, or `undefined`. */
+  readonly active: vscode.TextEditor | undefined
+}
+
+/**
+ * Editor tab management. Wraps `vscode.window.tabGroups`.
+ */
+export interface TabsHandle {
+  /**
+   * All editor tab groups. Each group holds an array of `tabs` — files,
+   * diffs, notebooks, terminals, etc. — plus the `activeTab` and
+   * `viewColumn`.
+   */
+  readonly groups: readonly vscode.TabGroup[]
+  /**
+   * Close one or more tabs. Accepts a single tab or array. Returns `true`
+   * if all targeted tabs were closed.
+   */
+  close: (tabs: vscode.Tab | readonly vscode.Tab[]) => Promise<boolean>
+}
+
+/**
  * Status bar surface. Currently exposes transient messaging at the
  * bottom-left status area; persistent items (priority, alignment, command
  * binding) will land here when a consumer needs them.
@@ -281,6 +371,34 @@ export interface Runtime<
    * calls with a discoverable namespace.
    */
   statusBar: StatusBarHandle
+
+  /**
+   * System clipboard read/write. Replaces raw `vscode.env.clipboard.*`
+   * calls.
+   */
+  clipboard: ClipboardHandle
+
+  /**
+   * Workspace surface. Folder list + change events + document IO.
+   * Filesystem read/write lives on `Runtime.fs`.
+   */
+  workspace: WorkspaceHandle
+
+  /**
+   * Filesystem operations. Replaces raw `vscode.workspace.fs.*` calls.
+   */
+  fs: FsHandle
+
+  /**
+   * Active text editor accessor. Replaces raw
+   * `vscode.window.activeTextEditor` reads.
+   */
+  editor: EditorHandle
+
+  /**
+   * Editor tab management. Replaces raw `vscode.window.tabGroups.*` calls.
+   */
+  tabs: TabsHandle
 
   /**
    * Combine multiple disposables into one. Equivalent to
@@ -449,6 +567,58 @@ export const createRuntime = <
   statusBar: {
     message: (text: string, timeoutMs: number = 1500): void => {
       vscode.window.setStatusBarMessage(text, timeoutMs)
+    },
+  },
+
+  clipboard: {
+    readText: async (): Promise<string> => vscode.env.clipboard.readText(),
+    writeText: async (text: string): Promise<void> => vscode.env.clipboard.writeText(text),
+  },
+
+  workspace: {
+    get folders(): readonly vscode.WorkspaceFolder[] | undefined {
+      return vscode.workspace.workspaceFolders
+    },
+    onDidChangeFolders: (
+      cb: (e: vscode.WorkspaceFoldersChangeEvent) => void,
+    ): vscode.Disposable => vscode.workspace.onDidChangeWorkspaceFolders(cb),
+    openTextDocument: async (target: vscode.Uri | string): Promise<vscode.TextDocument> => {
+      // The Uri / string overloads of vscode.workspace.openTextDocument can't
+      // be unified through a `Uri | string` parameter — the typed call has to
+      // dispatch per-shape.
+      return typeof target === 'string'
+        ? vscode.workspace.openTextDocument(target)
+        : vscode.workspace.openTextDocument(target)
+    },
+    applyEdit: async (edit: vscode.WorkspaceEdit): Promise<boolean> =>
+      vscode.workspace.applyEdit(edit),
+  },
+
+  fs: {
+    readDirectory: async (
+      uri: vscode.Uri,
+    ): Promise<ReadonlyArray<[string, vscode.FileType]>> =>
+      vscode.workspace.fs.readDirectory(uri),
+    stat: async (uri: vscode.Uri): Promise<vscode.FileStat> => vscode.workspace.fs.stat(uri),
+  },
+
+  editor: {
+    get active(): vscode.TextEditor | undefined {
+      return vscode.window.activeTextEditor
+    },
+  },
+
+  tabs: {
+    get groups(): readonly vscode.TabGroup[] {
+      return vscode.window.tabGroups.all
+    },
+    close: async (tabs: vscode.Tab | readonly vscode.Tab[]): Promise<boolean> => {
+      // VSCode's `close` doesn't accept readonly arrays — materialize a
+      // fresh mutable array when given one. Single-tab callers stay zero-copy.
+      if (Array.isArray(tabs)) {
+        return vscode.window.tabGroups.close((tabs as readonly vscode.Tab[]).slice())
+      }
+      return vscode.window.tabGroups.close(tabs)
     },
   },
 

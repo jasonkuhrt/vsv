@@ -125,64 +125,53 @@ All 19 call sites in `vscode-utils` migrated. See commit history.
 command binding) — not yet needed by any consumer. Land when first consumer
 asks.
 
-### Editor + document surface
+### Editor + document surface — RESOLVED 2026-04-27
 
-- `vscode.window.activeTextEditor`
-- `vscode.window.tabGroups.all`, `vscode.window.tabGroups.close`
-- `Tab.isPinned` predicate
-- `editor.selection.active`, `editor.document.getWordRangeAtPosition`,
-  `editor.document.getText(range)`
-- `editor.document.uri`, `editor.document.lineCount`,
-  `editor.document.lineAt(n).range.end`
+Closed by `rt.editor.active` and `rt.tabs.{groups, close}`. Tab/TabGroup/
+TextEditor/TextDocument/Position/Range types re-exported from
+`@jasonkuhrt/vsv/runtime`. Consumer `editor.selection.active`,
+`editor.document.*`, etc., flow through the re-exported `TextEditor` type
+unchanged.
 
-Need: a typed `editor` accessor that returns `undefined` when no editor is
-active, plus a `tabs` accessor over groups. Position/Range/Selection should
-be vsv value types (re-exported with JSDoc, or thin wrappers).
+### Workspace edits — RESOLVED 2026-04-27
 
-### Workspace edits
+Closed by `rt.workspace.applyEdit(edit)` + `WorkspaceEdit` value re-export
+(plus `Range`, `Position`). Consumers construct `new WorkspaceEdit()`
+imported from `@jasonkuhrt/vsv/runtime` and apply via `rt.workspace.applyEdit`.
 
-- `vscode.WorkspaceEdit` constructor + `wsEdit.replace(uri, range, text)`
-- `vscode.workspace.applyEdit(edit)`
+### Filesystem primitives — RESOLVED 2026-04-27
 
-Need: a `WorkspaceEdit` builder primitive. The current ergonomics force the
-caller to know that `applyEdit` exists at the workspace level, while the
-`WorkspaceEdit` is built standalone — that mismatch is a footgun.
+Closed by `rt.fs.{readDirectory, stat}` and
+`rt.workspace.openTextDocument(target)`. `FileType` value enum re-exported
+from `@jasonkuhrt/vsv/runtime`; `FileStat` and `TextDocument` types
+re-exported. Mock surface added to vscode-mock for fs operations
+(`__state.setFsDirectory`, `setFsStat`).
 
-### Filesystem primitives
+**Still deferred:** typed errors. `vscode.FileSystemError` instances are
+thrown raw; consumers still `try/catch` and discard the error type. Worth
+landing if a consumer needs to disambiguate (e.g. permission denied vs
+file not found).
 
-- `vscode.workspace.fs.readDirectory(uri)`
-- `vscode.workspace.fs.stat(uri)`
-- `vscode.workspace.openTextDocument(uri)`
+### Workspace folders — RESOLVED 2026-04-27
 
-Need: a `fs` namespace mirroring `vscode.workspace.fs`, ideally returning
-typed errors (currently consumers wrap in `try/catch` and discard error
-type). `FileType.Directory` etc. should be re-exported as a typed enum.
+Closed by `rt.workspace.folders` accessor + `rt.workspace.onDidChangeFolders`
+event subscription. `WorkspaceFolder` type re-exported. Mock surface added
+via `__state.setWorkspaceFolders`.
 
-### Workspace folders
+### URI construction + introspection — RESOLVED 2026-04-27
 
-- `vscode.workspace.workspaceFolders` — every dig command in
-  `vscode-utils` reads this on entry.
+Closed by `Uri` value+type re-export from `@jasonkuhrt/vsv/runtime`. Static
+methods (`Uri.file`, `Uri.parse`, `Uri.joinPath`) work identically.
+Discoverable via tab-completion on `@jasonkuhrt/vsv/runtime` import.
 
-Need: a typed accessor with sensible undefined handling, plus
-`onDidChangeWorkspaceFolders` lifecycle integration.
+`ConfigurationTarget` enum re-exported alongside Uri while we were there.
 
-### URI construction + introspection
+### Clipboard — RESOLVED 2026-04-27
 
-- `vscode.Uri.file(fsPath)`
-- `vscode.Uri.parse(uriStr)`
-- `vscode.Uri.joinPath(parent, child)`
-- `uri.fsPath`, `uri.scheme`
-
-Need: thin re-export with JSDoc. The current types are fine; the
-discoverability isn't.
-
-### Clipboard
-
-- `vscode.env.clipboard.readText()`
-- `vscode.env.clipboard.writeText(s)`
-
-Need: a `clipboard` namespace. Trivial, but two call sites in
-`vscode-utils` already.
+Closed by `rt.clipboard.{readText, writeText}`. Mock surface added via
+`__state.{getClipboard, setClipboard}` and a working `vscode.env.clipboard`
+mock. Consumer's clipboard-roundtrip pattern (snapshot → write sentinel →
+invoke command → read → restore) now flows entirely through `rt.clipboard.*`.
 
 ### ExtensionContext + Disposable shape
 

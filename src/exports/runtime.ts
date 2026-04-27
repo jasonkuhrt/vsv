@@ -1,12 +1,31 @@
 export { createRuntime } from '#lib/runtime/create'
+export {
+  ConfigurationTarget,
+  FileType,
+  Position,
+  Range,
+  Uri,
+  WorkspaceEdit,
+} from '#lib/runtime/values'
 export type {
+  FileStat,
+  Tab,
+  TabGroup,
+  TextDocument,
+  TextEditor,
+  WorkspaceFolder,
+} from '#lib/runtime/values'
+export type {
+  ClipboardHandle,
   CommandRegistryShape,
   ConfigHandle,
   ConfigRegistryShape,
   ContextKeyHandle,
   ContextKeyRegistryShape,
+  EditorHandle,
   EventHandle,
   EventRegistryShape,
+  FsHandle,
   NotifyHandle,
   PromptOptions,
   QuickPickItem,
@@ -14,4 +33,6 @@ export type {
   StatusBarHandle,
   StateHandle,
   StateRegistryShape,
+  TabsHandle,
+  WorkspaceHandle,
 } from '#lib/runtime/create'

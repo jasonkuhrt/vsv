@@ -250,6 +250,81 @@ describe('createRuntime', () => {
     })
   })
 
+  describe('clipboard', () => {
+    test('writeText then readText round-trips the value', async () => {
+      const r = createRuntime()
+      await r.clipboard.writeText('hello')
+      expect(await r.clipboard.readText()).toBe('hello')
+    })
+
+    test('readText returns the seeded clipboard value', async () => {
+      const r = createRuntime()
+      vscode.state.setClipboard('seeded')
+      expect(await r.clipboard.readText()).toBe('seeded')
+    })
+
+    test('writeText updates observable mock state', async () => {
+      const r = createRuntime()
+      await r.clipboard.writeText('written')
+      expect(vscode.state.getClipboard()).toBe('written')
+    })
+  })
+
+  describe('workspace.folders', () => {
+    test('returns undefined when no folder is open', () => {
+      const r = createRuntime()
+      expect(r.workspace.folders).toBeUndefined()
+    })
+
+    test('returns the seeded folders with computed indexes', () => {
+      const r = createRuntime()
+      const fakeUri = {
+        fsPath: '/repo/a',
+        toString: () => 'file:///repo/a',
+      } as unknown as import('vscode').Uri
+      vscode.state.setWorkspaceFolders([{ uri: fakeUri }])
+      const folders = r.workspace.folders
+      expect(folders).toHaveLength(1)
+      expect(folders?.[0]?.index).toBe(0)
+      expect(folders?.[0]?.name).toBe('a')
+    })
+  })
+
+  describe('fs', () => {
+    test('readDirectory returns seeded entries', async () => {
+      const r = createRuntime()
+      const dirUri = { fsPath: '/repo' } as unknown as import('vscode').Uri
+      vscode.state.setFsDirectory('/repo', [
+        ['src', 2 /* Directory */],
+        ['readme.md', 1 /* File */],
+      ])
+      const entries = await r.fs.readDirectory(dirUri)
+      expect(entries).toHaveLength(2)
+      expect(entries[0]?.[0]).toBe('src')
+      expect(entries[1]?.[0]).toBe('readme.md')
+    })
+
+    test('readDirectory throws on missing path', async () => {
+      const r = createRuntime()
+      const dirUri = { fsPath: '/nonexistent' } as unknown as import('vscode').Uri
+      let caught: Error | undefined
+      try {
+        await r.fs.readDirectory(dirUri)
+      } catch (e) {
+        caught = e as Error
+      }
+      expect(caught?.message).toMatch(/ENOENT/)
+    })
+
+    test('stat returns the seeded stat', async () => {
+      const r = createRuntime()
+      const fileUri = { fsPath: '/repo/a' } as unknown as import('vscode').Uri
+      vscode.state.setFsStat('/repo/a', { type: 1, ctime: 0, mtime: 0, size: 42 })
+      const stat = await r.fs.stat(fileUri)
+      expect(stat.size).toBe(42)
+    })
+  })
+
   describe('disposables', () => {
     test('dispose() disposes all members', () => {
       const r = createRuntime()
