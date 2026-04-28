@@ -103,19 +103,29 @@ is the union of declarations across all consumer manifests above, plus the
 12 `workbench.action.*` commands in `workbench-cycler` (which has not yet
 migrated to `executeExternalCommand` — separate work item).
 
-### Foreign configuration
+### Foreign configuration — RESOLVED 2026-04-28
 
-`defineConfig` re-contributes the key into `package.json.contributes
-.configuration`, which is wrong for settings the extension reads/writes but
-doesn't own (e.g. `editor.codeLens`, `problems.visibility`,
-`explorer.confirmDelete`). Consumers fall back to raw
-`vscode.workspace.getConfiguration(section).get/update/inspect` with manual
-casts.
+Closed by adding `ForeignConfigDecl` to the manifest schema and
+`defineForeignConfig` to `Runtime` (FCR is the 7th generic on `Runtime`
+and `createRuntime`). Foreign configs are declared with their full dotted
+key (`editor.codeLens`, `explorer.confirmDelete`, etc.) and a value
+schema; codegen emits a typed `ForeignConfigRegistry` and explicitly
+SKIPS the package.json `contributes.configuration` sync — codegen tests
+guard the boundary.
 
-Need: a sibling primitive (e.g. `defineForeignConfig` or
-`useExternalConfig`) that gives a typed accessor without the manifest
-contribution. Should be backed by a `ForeignConfigDecl` in the manifest so
-the type lives there, not at the call site.
+`ConfigHandle` also gained `inspect()` (returns per-target snapshot for
+save/mutate/restore patterns) and the `update` parameter was relaxed to
+`V | undefined` so restoring an originally-unset value via
+`update(undefined, target)` matches VSCode's actual semantic of "clear
+the slot."
+
+Both consumer extensions migrated:
+
+- `vscode-explorer-delete`: `explorer.confirmDelete`
+- `vscode-utils`: `editor.codeLens`, `problems.visibility`
+
+Zero raw `vscode.workspace.getConfiguration` calls remain in either
+consumer.
 
 ### Notifications + status bar — RESOLVED 2026-04-27
 

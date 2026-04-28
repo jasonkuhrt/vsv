@@ -113,6 +113,38 @@ export class ConfigDecl extends Schema.TaggedClass<ConfigDecl>()('ConfigDecl', {
 }) {}
 
 /**
+ * Declares a configuration setting **owned by VSCode core or another extension**
+ * that this extension reads/writes but does not contribute. Adds the key to
+ * the generated `ForeignConfigRegistry` and gives a typed accessor via
+ * `runtime.defineForeignConfig(fullKey)`. **Not** synced into
+ * `package.json#contributes.configuration` — re-contributing a foreign key
+ * would corrupt VSCode's settings UI and ownership semantics.
+ *
+ * Use this for the common case of toggling/inspecting a built-in VSCode
+ * setting (`editor.codeLens`, `explorer.confirmDelete`, `problems.visibility`,
+ * etc.) from a command, without re-declaring the setting.
+ *
+ * Fields
+ * ------
+ * - `fullKey` — the dotted setting path as it appears in `settings.json`
+ *   (e.g. `editor.codeLens`, `explorer.confirmDelete`). Stored as a single
+ *   string rather than `section`+`key` to avoid ambiguity for nested settings
+ *   (`typescript.preferences.useAliasesForRenames` could be split many ways).
+ * - `valueSchema` — Effect Schema describing the value type. Drives the
+ *   typed accessor returned by `defineForeignConfig`.
+ * - `ownedBy` — optional documentation note for the source ("vscode core",
+ *   "vscode.typescript-language-features", etc.). Has no codegen effect.
+ */
+export class ForeignConfigDecl extends Schema.TaggedClass<ForeignConfigDecl>()(
+  'ForeignConfigDecl',
+  {
+    fullKey: Schema.NonEmptyTrimmedString,
+    valueSchema: Schema.Unknown,
+    ownedBy: Schema.optional(Schema.String),
+  },
+) {}
+
+/**
  * Declares persistent state — a key-value entry backed by VS Code's
  * `globalState` (machine-wide) or `workspaceState` (per-workspace) memento.
  * Accessed at runtime via `runtime.defineState(ctx, key, scope)`.
@@ -178,5 +210,6 @@ export class Manifest extends Schema.TaggedClass<Manifest>()('Manifest', {
   externalCommands: Schema.optional(Schema.Array(ExternalCommandDecl)),
   contextKeys: Schema.optional(Schema.Array(ContextKeyDecl)),
   config: Schema.optional(Schema.Array(ConfigDecl)),
+  foreignConfig: Schema.optional(Schema.Array(ForeignConfigDecl)),
   state: Schema.optional(Schema.Array(StateDecl)),
 }) {}

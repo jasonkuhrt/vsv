@@ -55,6 +55,14 @@ export const emitRegistries = (manifest: Manifest): string => {
   }
   parts.push('}\n\n')
 
+  parts.push('export type ForeignConfigRegistry = {\n')
+  for (const fc of manifest.foreignConfig ?? []) {
+    const valueSchema = asSchema(fc.valueSchema)
+    const valueTs = valueSchema ? schemaToTs(valueSchema) : 'unknown'
+    parts.push(`  ${JSON.stringify(fc.fullKey)}: ${valueTs}\n`)
+  }
+  parts.push('}\n\n')
+
   parts.push('export type StateRegistry = {\n')
   for (const s of manifest.state ?? []) {
     const valueSchema = asSchema(s.valueSchema)

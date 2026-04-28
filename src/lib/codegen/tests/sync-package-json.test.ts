@@ -1,6 +1,6 @@
 import { Schema } from 'effect'
 import { describe, expect, test } from 'bun:test'
-import { CommandDecl, ConfigDecl, Manifest } from '../../manifest/schema.ts'
+import { CommandDecl, ConfigDecl, ForeignConfigDecl, Manifest } from '../../manifest/schema.ts'
 import { mergeManifestIntoPackageJson } from '../sync-package-json.ts'
 
 describe('mergeManifestIntoPackageJson', () => {
@@ -63,6 +63,43 @@ describe('mergeManifestIntoPackageJson', () => {
       type: 'boolean',
       description: 'Toggle the extension',
     })
+  })
+
+  test('foreignConfig is NOT synced into contributes.configuration', () => {
+    const m = Manifest.make({
+      name: 'ext',
+      publisher: 'jasonkuhrt',
+      foreignConfig: [
+        ForeignConfigDecl.make({
+          fullKey: 'editor.codeLens',
+          valueSchema: Schema.Boolean,
+        }),
+      ],
+    })
+    const merged = mergeManifestIntoPackageJson(m, {})
+    const contributes = merged['contributes'] as { configuration?: unknown } | undefined
+    // The package.json sync must skip foreign keys — re-contributing
+    // `editor.codeLens` would corrupt VSCode's settings UI ownership.
+    expect(contributes?.configuration).toBeUndefined()
+  })
+
+  test('foreignConfig and config coexist — only config syncs', () => {
+    const m = Manifest.make({
+      name: 'ext',
+      publisher: 'jasonkuhrt',
+      config: [ConfigDecl.make({ key: 'ext.enabled', valueSchema: Schema.Boolean })],
+      foreignConfig: [
+        ForeignConfigDecl.make({
+          fullKey: 'editor.codeLens',
+          valueSchema: Schema.Boolean,
+        }),
+      ],
+    })
+    const merged = mergeManifestIntoPackageJson(m, {})
+    const contributes = merged['contributes'] as {
+      configuration: { properties: Record<string, unknown> }
+    }
+    expect(Object.keys(contributes.configuration.properties)).toEqual(['ext.enabled'])
   })
 
   test('manifest name wins over existing package.json name', () => {

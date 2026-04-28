@@ -37,6 +37,19 @@ export type ContextKeyRegistryShape = Record<string, unknown>
 export type ConfigRegistryShape = Record<string, unknown>
 
 /**
+ * Shape of the `ForeignConfigRegistry` map produced by codegen from the
+ * manifest's `foreignConfig` array. Maps a foreign setting's full dotted
+ * key (e.g. `editor.codeLens`, `explorer.confirmDelete`) to its value type.
+ * Drives `defineForeignConfig`'s value typing.
+ *
+ * Foreign configs are NOT synced into `package.json#contributes.configuration`
+ * — re-contributing a built-in or third-party setting would corrupt VSCode's
+ * settings UI. Use foreign configs to type-safely read/write settings the
+ * extension does not own.
+ */
+export type ForeignConfigRegistryShape = Record<string, unknown>
+
+/**
  * Shape of the `StateRegistry` map produced by codegen. Each entry pairs a
  * value type with its memento scope (`'global'` or `'workspace'`). Drives
  * `defineState`'s value and scope typing.
@@ -66,20 +79,53 @@ export interface ContextKeyHandle<V> {
 }
 
 /**
+ * Per-target inspection of a configuration value. Mirrors VSCode's
+ * `WorkspaceConfiguration.inspect()` return shape (subset). Use to read
+ * a specific scope (e.g. `globalValue`) for the snapshot/mutate/restore
+ * pattern: capture the original value, mutate, restore in a `finally` block.
+ */
+export interface ConfigInspection<V> {
+  /** Fully-qualified key the inspection refers to. */
+  key: string
+  /** Value declared as the schema/manifest default, if any. */
+  defaultValue?: V
+  /** User-scope value (Settings → User). */
+  globalValue?: V
+  /** Workspace-scope value (Settings → Workspace). */
+  workspaceValue?: V
+  /** Workspace-folder-scope value. */
+  workspaceFolderValue?: V
+}
+
+/**
  * Handle to a configuration setting. Returned by
- * `runtime.defineConfig(key, section?)`.
+ * `runtime.defineConfig(key, section?)` for extension-owned settings and
+ * `runtime.defineForeignConfig(fullKey)` for foreign (vscode/3rd-party) settings.
  *
- * Reads/writes are scoped to the optional `section` (e.g. `'editor'`); if
- * omitted, reads use the root configuration. Updates default to workspace
- * target — pass an explicit `ConfigurationTarget` to write to user/global.
+ * Reads default to the merged effective value (workspace folder > workspace
+ * > global > default). Updates default to `Workspace` target — pass an
+ * explicit `ConfigurationTarget` to write to user/global.
  */
 export interface ConfigHandle<V> {
   /** Read the current value. Returns `undefined` if not set anywhere. */
   get: () => V | undefined
   /** Read the current value, falling back to `defaultValue` if unset. */
   getWithDefault: (defaultValue: V) => V
-  /** Update the value. Defaults to `Workspace` target. */
-  update: (value: V, target?: vscode.ConfigurationTarget) => Promise<void>
+  /**
+   * Update the value at the given target. Defaults to `Workspace`. Passing
+   * `undefined` clears the value at that target — matches VSCode's actual
+   * `WorkspaceConfiguration.update(key, undefined, target)` semantic, which
+   * is the correct way to restore a snapshot whose original was unset.
+   */
+  update: (value: V | undefined, target?: vscode.ConfigurationTarget) => Promise<void>
+  /**
+   * Per-target inspection — returns `undefined` if the key has never been
+   * set in any scope. The snapshot/mutate/restore pattern uses
+   * `inspect()?.globalValue` to capture an original, then `update(...)` to
+   * mutate, then `update(original, Global)` in `finally` to restore — passing
+   * the original `undefined` clears the slot.
+   */
+  inspect: () => ConfigInspection<V> | undefined
   /** Subscribe to changes for this specific key. Returns a disposable. */
   onChange: (cb: (value: V | undefined) => void) => vscode.Disposable
 }
@@ -322,6 +368,7 @@ export interface Runtime<
   SR extends StateRegistryShape = StateRegistryShape,
   ER extends EventRegistryShape = EventRegistryShape,
   EXR extends ExternalCommandRegistryShape = ExternalCommandRegistryShape,
+  FCR extends ForeignConfigRegistryShape = ForeignConfigRegistryShape,
 > {
   /**
    * Register a command handler. The handler's argument and return types are
@@ -402,6 +449,19 @@ export interface Runtime<
    * and writes (e.g. `'editor'` for `editor.foo`); omit for root keys.
    */
   defineConfig: <K extends keyof CFR & string>(key: K, section?: string) => ConfigHandle<CFR[K]>
+
+  /**
+   * Define a typed accessor for a configuration setting **owned by VSCode
+   * core or another extension**. Pass the full dotted key (e.g.
+   * `editor.codeLens`); the value type is looked up from
+   * `ForeignConfigRegistry`.
+   *
+   * Distinct from `defineConfig` because foreign settings must NOT be
+   * re-contributed in `package.json#contributes.configuration` — doing so
+   * would corrupt VSCode's settings UI. Foreign settings are declared via
+   * `ForeignConfigDecl` and skipped by the package.json sync.
+   */
+  defineForeignConfig: <K extends keyof FCR & string>(fullKey: K) => ConfigHandle<FCR[K]>
 
   /** Define a custom event emitter. */
   defineEvent: <K extends keyof ER & string>(key: K) => EventHandle<ER[K]>
@@ -507,7 +567,8 @@ export const createRuntime = <
   SR extends StateRegistryShape = StateRegistryShape,
   ER extends EventRegistryShape = EventRegistryShape,
   EXR extends ExternalCommandRegistryShape = ExternalCommandRegistryShape,
->(): Runtime<CR, CKR, CFR, SR, ER, EXR> => ({
+  FCR extends ForeignConfigRegistryShape = ForeignConfigRegistryShape,
+>(): Runtime<CR, CKR, CFR, SR, ER, EXR, FCR> => ({
   defineCommand: <Id extends keyof CR & string>(
     id: Id,
     handler: (args: CR[Id]['args']) => Promise<CR[Id]['result']> | CR[Id]['result'],
@@ -564,20 +625,67 @@ export const createRuntime = <
 
   defineConfig: <K extends keyof CFR & string>(key: K, section?: string) => {
     const getCfg = (): vscode.WorkspaceConfiguration => vscode.workspace.getConfiguration(section)
+    const fullKey = section === undefined ? key : `${section}.${key}`
     return {
       get: (): CFR[K] | undefined => getCfg().get<CFR[K]>(key),
       getWithDefault: (defaultValue: CFR[K]): CFR[K] => getCfg().get<CFR[K]>(key, defaultValue),
       update: async (
-        value: CFR[K],
+        value: CFR[K] | undefined,
         target: vscode.ConfigurationTarget = 2 /* Workspace */ as vscode.ConfigurationTarget,
       ): Promise<void> => {
         await getCfg().update(key, value, target)
       },
+      inspect: (): ConfigInspection<CFR[K]> | undefined => {
+        const ins = getCfg().inspect<CFR[K]>(key)
+        if (ins === undefined) return undefined
+        const out: ConfigInspection<CFR[K]> = { key: ins.key }
+        if (ins.defaultValue !== undefined) out.defaultValue = ins.defaultValue
+        if (ins.globalValue !== undefined) out.globalValue = ins.globalValue
+        if (ins.workspaceValue !== undefined) out.workspaceValue = ins.workspaceValue
+        if (ins.workspaceFolderValue !== undefined)
+          out.workspaceFolderValue = ins.workspaceFolderValue
+        return out
+      },
       onChange: (cb: (value: CFR[K] | undefined) => void): vscode.Disposable => {
         return vscode.workspace.onDidChangeConfiguration((e) => {
-          const effectiveSection = section === undefined ? key : `${section}.${key}`
-          if (e.affectsConfiguration(effectiveSection)) {
+          if (e.affectsConfiguration(fullKey)) {
             cb(getCfg().get<CFR[K]>(key))
+          }
+        })
+      },
+    }
+  },
+
+  // Foreign configs are accessed at the root config level using the full
+  // dotted key. This avoids ambiguity for nested settings like
+  // `typescript.preferences.useAliasesForRenames` where the section/key split
+  // is not unique.
+  defineForeignConfig: <K extends keyof FCR & string>(fullKey: K) => {
+    const getCfg = (): vscode.WorkspaceConfiguration => vscode.workspace.getConfiguration()
+    return {
+      get: (): FCR[K] | undefined => getCfg().get<FCR[K]>(fullKey),
+      getWithDefault: (defaultValue: FCR[K]): FCR[K] => getCfg().get<FCR[K]>(fullKey, defaultValue),
+      update: async (
+        value: FCR[K] | undefined,
+        target: vscode.ConfigurationTarget = 2 /* Workspace */ as vscode.ConfigurationTarget,
+      ): Promise<void> => {
+        await getCfg().update(fullKey, value, target)
+      },
+      inspect: (): ConfigInspection<FCR[K]> | undefined => {
+        const ins = getCfg().inspect<FCR[K]>(fullKey)
+        if (ins === undefined) return undefined
+        const out: ConfigInspection<FCR[K]> = { key: ins.key }
+        if (ins.defaultValue !== undefined) out.defaultValue = ins.defaultValue
+        if (ins.globalValue !== undefined) out.globalValue = ins.globalValue
+        if (ins.workspaceValue !== undefined) out.workspaceValue = ins.workspaceValue
+        if (ins.workspaceFolderValue !== undefined)
+          out.workspaceFolderValue = ins.workspaceFolderValue
+        return out
+      },
+      onChange: (cb: (value: FCR[K] | undefined) => void): vscode.Disposable => {
+        return vscode.workspace.onDidChangeConfiguration((e) => {
+          if (e.affectsConfiguration(fullKey)) {
+            cb(getCfg().get<FCR[K]>(fullKey))
           }
         })
       },

@@ -3,6 +3,7 @@ export {
   ConfigDecl,
   ContextKeyDecl,
   ExternalCommandDecl,
+  ForeignConfigDecl,
   Manifest,
   StateDecl,
 } from '#lib/manifest/schema'

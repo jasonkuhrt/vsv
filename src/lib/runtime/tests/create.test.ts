@@ -32,6 +32,12 @@ type EventRegistry = {
   pulse: number
 }
 
+type ForeignConfigRegistry = {
+  'editor.codeLens': boolean
+  'explorer.confirmDelete': boolean
+  'problems.visibility': boolean
+}
+
 type ExternalCommandRegistry = {
   // No args (Schema.Void → void). Caller invokes as
   // `rt.executeExternalCommand('moveFileToTrash')` — no extra args.
@@ -141,6 +147,96 @@ describe('createRuntime', () => {
       >()
       await r.executeExternalCommand('moveFileToTrash')
       expect(vscode).toHaveExecutedCommand('moveFileToTrash')
+    })
+  })
+
+  describe('defineForeignConfig', () => {
+    test('reads the merged value of a foreign setting', () => {
+      vscode.state.setConfigurationDetail('editor.codeLens', { globalValue: true })
+      const r = createRuntime<
+        CommandRegistryShape,
+        ContextKeyRegistryShape,
+        ConfigRegistryShape,
+        StateRegistryShape,
+        EventRegistryShape,
+        ExternalCommandRegistryShape,
+        ForeignConfigRegistry
+      >()
+      const handle = r.defineForeignConfig('editor.codeLens')
+      expect(handle.get()).toBe(true)
+    })
+
+    test('update writes to the chosen target without re-contributing the key', async () => {
+      const r = createRuntime<
+        CommandRegistryShape,
+        ContextKeyRegistryShape,
+        ConfigRegistryShape,
+        StateRegistryShape,
+        EventRegistryShape,
+        ExternalCommandRegistryShape,
+        ForeignConfigRegistry
+      >()
+      const handle = r.defineForeignConfig('editor.codeLens')
+      await handle.update(true, 1 /* Global */ as never)
+      expect(handle.inspect()?.globalValue).toBe(true)
+      // The package.json sync isn't running here, but the manifest never
+      // contained `editor.codeLens` in `config: [...]` — only in
+      // `foreignConfig: [...]`. Codegen tests below verify the
+      // contributes.configuration sync is skipped for foreign keys.
+    })
+
+    test('inspect returns per-target snapshot for snapshot/restore patterns', async () => {
+      vscode.state.setConfigurationDetail('explorer.confirmDelete', { globalValue: true })
+      const r = createRuntime<
+        CommandRegistryShape,
+        ContextKeyRegistryShape,
+        ConfigRegistryShape,
+        StateRegistryShape,
+        EventRegistryShape,
+        ExternalCommandRegistryShape,
+        ForeignConfigRegistry
+      >()
+      const handle = r.defineForeignConfig('explorer.confirmDelete')
+      const original = handle.inspect()?.globalValue
+      expect(original).toBe(true)
+      await handle.update(false, 1 /* Global */ as never)
+      expect(handle.inspect()?.globalValue).toBe(false)
+      // Restore original; cast since `original` is `boolean | undefined` after
+      // the optional-chain on inspect, but the snapshot/restore pattern
+      // assumes the original value's defined.
+      await handle.update(original ?? true, 1 /* Global */ as never)
+      expect(handle.inspect()?.globalValue).toBe(true)
+    })
+
+    test('getWithDefault falls back when unset', () => {
+      const r = createRuntime<
+        CommandRegistryShape,
+        ContextKeyRegistryShape,
+        ConfigRegistryShape,
+        StateRegistryShape,
+        EventRegistryShape,
+        ExternalCommandRegistryShape,
+        ForeignConfigRegistry
+      >()
+      const handle = r.defineForeignConfig('problems.visibility')
+      expect(handle.getWithDefault(false)).toBe(false)
+    })
+  })
+
+  describe('defineConfig.inspect', () => {
+    test('returns undefined for unset keys', () => {
+      const r = createRuntime<CommandRegistryShape, ContextKeyRegistryShape, ConfigRegistry>()
+      const handle = r.defineConfig('enabled')
+      expect(handle.inspect()).toBeUndefined()
+    })
+
+    test('reflects per-target writes from update', async () => {
+      const r = createRuntime<CommandRegistryShape, ContextKeyRegistryShape, ConfigRegistry>()
+      const handle = r.defineConfig('enabled')
+      await handle.update(true, 1 /* Global */ as never)
+      const ins = handle.inspect()
+      expect(ins?.globalValue).toBe(true)
+      expect(ins?.workspaceValue).toBeUndefined()
     })
   })
 
@@ -441,3 +537,4 @@ type ContextKeyRegistryShape = Record<string, unknown>
 type ConfigRegistryShape = Record<string, unknown>
 type StateRegistryShape = Record<string, { value: unknown; scope: 'global' | 'workspace' }>
 type EventRegistryShape = Record<string, unknown>
+type ExternalCommandRegistryShape = Record<string, { args: unknown; result: unknown }>
