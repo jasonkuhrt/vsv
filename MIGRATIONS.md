@@ -62,6 +62,10 @@ Items 2–5 of the original list — all the test-mock gaps — were resolved in
 
 **`defineConfig` for foreign vscode settings — RESOLVED 2026-04-28.** Added `ForeignConfigDecl` to the manifest schema and `defineForeignConfig` to `Runtime` (FCR is the 7th generic on `Runtime` and `createRuntime`). Foreign configs are NOT synced into `package.json#contributes.configuration` — codegen tests guard the boundary. Also added `inspect()` to `ConfigHandle` (used for the snapshot/mutate/restore pattern in `vscode-explorer-delete`'s confirm-toggle), and changed `update`'s value parameter to `V | undefined` so passing the original `undefined` correctly clears a slot. `explorer.confirmDelete`, `editor.codeLens`, and `problems.visibility` migrated to `rt.defineForeignConfig` in both consumer extensions; zero raw `vscode.workspace.getConfiguration` calls remain.
 
+### Resolved (continued)
+
+**Boundary semantics for `getWordRangeAtPosition` — VERIFIED 2026-04-28.** VSCode's `TextModel.getWordAtPosition` treats `column == end-of-word` as inside the word (cursor-just-past-last-char still matches). The mock implements the equivalent (`start <= pos <= end`) and a dedicated test now pins the four boundary positions for `"foo bar"` (positions 0, 3, 4, 7). Documented in `src/lib/runtime-test/tests/vscode-mock-extended.test.ts`.
+
 ### Open
 
-1. **Document boundary semantics.** `getWordRangeAtPosition` in the mock matches positions inclusive on both ends (`start <= pos <= end`). VSCode's actual implementation uses inclusive-end too via 1-indexed columns; verify alignment if any consumer code hits the boundary case.
+_(none — all open follow-ups have been addressed.)_

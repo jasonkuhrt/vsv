@@ -223,6 +223,24 @@ describe('TextDocument', () => {
     expect(doc.getWordRangeAtPosition(new mod.Position(0, 4))).toBeUndefined()
   })
 
+  test('getWordRangeAtPosition boundary semantics match VSCode (inclusive end)', async () => {
+    const mod = await loadMock()
+    // VSCode's TextModel.getWordAtPosition treats column == end-of-word as
+    // INSIDE the word (so cursor-just-past-last-char still matches). The
+    // mock matches: `start <= pos <= end` where `end` is the exclusive-end
+    // index of the regex match, but with `<=` the position equal to `end`
+    // still resolves to the word.
+    const doc = vscode.state.openDocument('file:///x.ts', 'foo bar')
+    // Position 0 (start of foo) → matches 'foo'.
+    expect(doc.getWordRangeAtPosition(new mod.Position(0, 0))?.end.character).toBe(3)
+    // Position 3 (end of foo, before space) → still matches 'foo'.
+    expect(doc.getWordRangeAtPosition(new mod.Position(0, 3))?.end.character).toBe(3)
+    // Position 4 (start of bar, after space) → matches 'bar'.
+    expect(doc.getWordRangeAtPosition(new mod.Position(0, 4))?.start.character).toBe(4)
+    // Position 7 (end of bar, end-of-line) → still matches 'bar'.
+    expect(doc.getWordRangeAtPosition(new mod.Position(0, 7))?.end.character).toBe(7)
+  })
+
   test('lineAt returns text and full-line range', () => {
     const doc = vscode.state.openDocument('file:///x.ts', 'first\nsecond\nthird')
     const line = doc.lineAt(1)
