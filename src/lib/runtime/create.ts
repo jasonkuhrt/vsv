@@ -9,6 +9,21 @@ import * as vscode from 'vscode'
 export type CommandRegistryShape = Record<string, { args: unknown; result: unknown }>
 
 /**
+ * Shape of the `ExternalCommandRegistry` map produced by codegen from the
+ * manifest's `externalCommands` array. Each key is a command id (typically a
+ * VSCode core command name like `revealInExplorer` or
+ * `vscode.executeDocumentRenameProvider`); each value pairs the command's
+ * argument and result types. Drives `executeExternalCommand`'s typing.
+ *
+ * Args should typically be a tuple matching the command's positional
+ * signature (e.g. `[Uri, Position, string]` for `executeDocumentRenameProvider`),
+ * which `executeExternalCommand` will spread into VSCode's variadic
+ * `commands.executeCommand(id, ...args)` call. `Schema.Void` is also valid
+ * for nullary commands.
+ */
+export type ExternalCommandRegistryShape = Record<string, { args: unknown; result: unknown }>
+
+/**
  * Shape of the `ContextKeyRegistry` map produced by codegen. Maps a context
  * key name to its value type. Drives `defineContextKey`'s value typing.
  */
@@ -198,9 +213,7 @@ export interface WorkspaceHandle {
   /**
    * Subscribe to workspace folder add/remove events. Returns a disposable.
    */
-  onDidChangeFolders: (
-    cb: (e: vscode.WorkspaceFoldersChangeEvent) => void,
-  ) => vscode.Disposable
+  onDidChangeFolders: (cb: (e: vscode.WorkspaceFoldersChangeEvent) => void) => vscode.Disposable
   /**
    * Open a text document by URI or filesystem path. Returns the
    * `TextDocument` (cached if already open). Use this to load file
@@ -274,13 +287,33 @@ export interface StatusBarHandle {
 }
 
 /**
+ * Convert an `ExternalCommandRegistry[Id]['args']` shape into the variadic
+ * tail of `executeExternalCommand`. The cases:
+ *
+ * - `void` (nullary command, e.g. `Schema.Void`) → `[]`. Consumer passes only
+ *   the id: `rt.executeExternalCommand('moveFileToTrash')`.
+ * - Tuple `[A, B, C]` (positional, e.g. `Schema.Tuple(Uri, Position, String)`) →
+ *   `[A, B, C]`. Consumer passes positional args:
+ *   `rt.executeExternalCommand('vscode.executeDocumentRenameProvider', uri, pos, name)`.
+ * - Anything else → `[T]` (single arg). Mostly an escape hatch for `Schema.Unknown`.
+ *
+ * The `[T] extends [void]` form is the canonical pattern for distinguishing
+ * exact `void` from other types in conditional types — `T extends void` is
+ * too loose because `undefined extends void` is also true.
+ */
+type ExternalCommandArgs<T> = [T] extends [void] ? [] : T extends readonly unknown[] ? T : [T]
+
+/**
  * Typed runtime surface for a vsv-managed extension. Created via
- * `createRuntime<CR, CKR, CFR, SR, ER>()` where each generic corresponds to
- * a generated `*Registry` type. Methods are indexed by the registries so
+ * `createRuntime<CR, CKR, CFR, SR, ER, EXR>()` where each generic corresponds
+ * to a generated `*Registry` type. Methods are indexed by the registries so
  * id/key mismatches and value-type mistakes surface at compile time.
  *
  * Most extensions only thread the first one or two generics; defaults
- * (`*RegistryShape`) widen to permissive untyped maps when omitted.
+ * (`*RegistryShape`) widen to permissive untyped maps when omitted. Pass
+ * `ExternalCommandRegistry` as the 6th generic to enable typed
+ * `executeExternalCommand` against built-in/foreign commands declared in
+ * the manifest's `externalCommands`.
  */
 export interface Runtime<
   CR extends CommandRegistryShape = CommandRegistryShape,
@@ -288,6 +321,7 @@ export interface Runtime<
   CFR extends ConfigRegistryShape = ConfigRegistryShape,
   SR extends StateRegistryShape = StateRegistryShape,
   ER extends EventRegistryShape = EventRegistryShape,
+  EXR extends ExternalCommandRegistryShape = ExternalCommandRegistryShape,
 > {
   /**
    * Register a command handler. The handler's argument and return types are
@@ -313,9 +347,43 @@ export interface Runtime<
   ) => Promise<CR[Id]['result']>
 
   /**
+   * Invoke a command declared in the manifest's `externalCommands` (typically
+   * a VSCode core command). Args are spread into VSCode's variadic
+   * `commands.executeCommand(id, ...args)` call, so the args type in the
+   * manifest should typically be a tuple matching the command's positional
+   * signature.
+   *
+   * For commands not declared in any registry, fall back to
+   * `executeCommandRaw`. Prefer this typed form when possible — it surfaces
+   * id typos, missing manifest entries, and arg-shape mismatches at compile
+   * time.
+   *
+   * The optional second generic `R` lets the caller pin a more specific
+   * result type than the manifest declared, which is the common case when
+   * the command returns an opaque VSCode runtime value (e.g. `WorkspaceEdit`,
+   * `Location`) that can't be expressed as a Schema. The default is the
+   * manifest's declared result.
+   *
+   * @example
+   * ```ts
+   * // No-arg command, void result:
+   * await rt.executeExternalCommand('moveFileToTrash')
+   *
+   * // Positional args, opaque result pinned via second generic:
+   * const edit = await rt.executeExternalCommand<
+   *   'vscode.executeDocumentRenameProvider',
+   *   WorkspaceEdit | undefined
+   * >('vscode.executeDocumentRenameProvider', uri, position, newName)
+   * ```
+   */
+  executeExternalCommand: <Id extends keyof EXR & string, R = EXR[Id]['result']>(
+    id: Id,
+    ...args: ExternalCommandArgs<EXR[Id]['args']>
+  ) => Promise<R>
+
+  /**
    * Untyped escape hatch matching `vscode.commands.executeCommand`. Use when
-   * the command isn't in `CommandRegistry` (e.g. VS Code core commands not
-   * declared as `ExternalCommandDecl`). Prefer typed alternatives when
+   * the command isn't in any registry. Prefer typed alternatives when
    * possible.
    */
   executeCommandRaw: (id: string, ...args: unknown[]) => Promise<unknown>
@@ -419,9 +487,17 @@ export interface Runtime<
  *   CommandRegistry,
  *   ContextKeyRegistry,
  *   StateRegistry,
+ *   ExternalCommandRegistry,
  * } from './generated/registries.ts'
  *
- * const rt = createRuntime<CommandRegistry, ContextKeyRegistry, never, StateRegistry>()
+ * const rt = createRuntime<
+ *   CommandRegistry,
+ *   ContextKeyRegistry,
+ *   never,
+ *   StateRegistry,
+ *   never,
+ *   ExternalCommandRegistry
+ * >()
  * ```
  */
 export const createRuntime = <
@@ -430,7 +506,8 @@ export const createRuntime = <
   CFR extends ConfigRegistryShape = ConfigRegistryShape,
   SR extends StateRegistryShape = StateRegistryShape,
   ER extends EventRegistryShape = EventRegistryShape,
->(): Runtime<CR, CKR, CFR, SR, ER> => ({
+  EXR extends ExternalCommandRegistryShape = ExternalCommandRegistryShape,
+>(): Runtime<CR, CKR, CFR, SR, ER, EXR> => ({
   defineCommand: <Id extends keyof CR & string>(
     id: Id,
     handler: (args: CR[Id]['args']) => Promise<CR[Id]['result']> | CR[Id]['result'],
@@ -443,6 +520,19 @@ export const createRuntime = <
   ): Promise<CR[Id]['result']> => {
     const result = await vscode.commands.executeCommand(id, args)
     return result as CR[Id]['result']
+  },
+
+  executeExternalCommand: async <Id extends keyof EXR & string, R = EXR[Id]['result']>(
+    id: Id,
+    ...args: ExternalCommandArgs<EXR[Id]['args']>
+  ): Promise<R> => {
+    const result = await vscode.commands.executeCommand(id, ...args)
+    // The cast is the implementation contract: the runtime trusts the
+    // manifest's declared result type (or the caller's override `R`). Lint
+    // can't see the registry guarantee, so suppress the single unsafe
+    // assertion at the API boundary.
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
+    return result as R
   },
 
   executeCommandRaw: async (id: string, ...args: unknown[]): Promise<unknown> =>
@@ -579,9 +669,8 @@ export const createRuntime = <
     get folders(): readonly vscode.WorkspaceFolder[] | undefined {
       return vscode.workspace.workspaceFolders
     },
-    onDidChangeFolders: (
-      cb: (e: vscode.WorkspaceFoldersChangeEvent) => void,
-    ): vscode.Disposable => vscode.workspace.onDidChangeWorkspaceFolders(cb),
+    onDidChangeFolders: (cb: (e: vscode.WorkspaceFoldersChangeEvent) => void): vscode.Disposable =>
+      vscode.workspace.onDidChangeWorkspaceFolders(cb),
     openTextDocument: async (target: vscode.Uri | string): Promise<vscode.TextDocument> => {
       // The Uri / string overloads of vscode.workspace.openTextDocument can't
       // be unified through a `Uri | string` parameter — the typed call has to
@@ -595,9 +684,7 @@ export const createRuntime = <
   },
 
   fs: {
-    readDirectory: async (
-      uri: vscode.Uri,
-    ): Promise<ReadonlyArray<[string, vscode.FileType]>> =>
+    readDirectory: async (uri: vscode.Uri): Promise<ReadonlyArray<[string, vscode.FileType]>> =>
       vscode.workspace.fs.readDirectory(uri),
     stat: async (uri: vscode.Uri): Promise<vscode.FileStat> => vscode.workspace.fs.stat(uri),
   },

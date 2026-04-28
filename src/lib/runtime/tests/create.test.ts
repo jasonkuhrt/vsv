@@ -32,6 +32,22 @@ type EventRegistry = {
   pulse: number
 }
 
+type ExternalCommandRegistry = {
+  // No args (Schema.Void → void). Caller invokes as
+  // `rt.executeExternalCommand('moveFileToTrash')` — no extra args.
+  moveFileToTrash: { args: void; result: void }
+  // Tuple args (Schema.Tuple → [...]) spread positionally:
+  // `rt.executeExternalCommand('list.expand', uri)`. The single-Uri tuple is
+  // the simplest case of positional args.
+  'list.expand': { args: [string]; result: void }
+  // Three positional args, returning a typed result:
+  // `rt.executeExternalCommand('vscode.executeDocumentRenameProvider', uri, pos, name)`.
+  'vscode.executeDocumentRenameProvider': {
+    args: [string, { line: number; character: number }, string]
+    result: { applied: boolean }
+  }
+}
+
 describe('createRuntime', () => {
   describe('defineCommand / executeCommand', () => {
     test('registers a typed command', () => {
@@ -45,6 +61,86 @@ describe('createRuntime', () => {
       r.defineCommand('vsv.add', ({ a, b }) => a + b)
       const result = await r.executeCommand('vsv.add', { a: 2, b: 3 })
       expect(result).toBe(5)
+    })
+  })
+
+  describe('executeExternalCommand', () => {
+    test('nullary (void args) invokes vscode command with id only', async () => {
+      const r = createRuntime<
+        CommandRegistryShape,
+        ContextKeyRegistryShape,
+        ConfigRegistryShape,
+        StateRegistryShape,
+        EventRegistryShape,
+        ExternalCommandRegistry
+      >()
+      // Pre-register a fake handler so we can observe the call shape.
+      const vs = await import('vscode')
+      let calledWith: unknown[] = ['NOT-CALLED']
+      vs.commands.registerCommand('moveFileToTrash', (...a: unknown[]) => {
+        calledWith = a
+        return undefined
+      })
+      await r.executeExternalCommand('moveFileToTrash')
+      // VSCode's executeCommand passes the registered handler (...args)
+      // directly. With void/nullary, no positional args land on the handler.
+      expect(calledWith).toEqual([])
+    })
+
+    test('tuple args spread into positional vscode.commands.executeCommand args', async () => {
+      const r = createRuntime<
+        CommandRegistryShape,
+        ContextKeyRegistryShape,
+        ConfigRegistryShape,
+        StateRegistryShape,
+        EventRegistryShape,
+        ExternalCommandRegistry
+      >()
+      const vs = await import('vscode')
+      let observed: unknown[] = ['NOT-CALLED']
+      vs.commands.registerCommand('list.expand', (...a: unknown[]) => {
+        observed = a
+      })
+      await r.executeExternalCommand('list.expand', 'file:///x.ts')
+      expect(observed).toEqual(['file:///x.ts'])
+    })
+
+    test('multi-arg tuple flows through positionally', async () => {
+      const r = createRuntime<
+        CommandRegistryShape,
+        ContextKeyRegistryShape,
+        ConfigRegistryShape,
+        StateRegistryShape,
+        EventRegistryShape,
+        ExternalCommandRegistry
+      >()
+      const vs = await import('vscode')
+      let observed: unknown[] = []
+      vs.commands.registerCommand('vscode.executeDocumentRenameProvider', (...a: unknown[]) => {
+        observed = a
+        return { applied: true }
+      })
+      const result = await r.executeExternalCommand(
+        'vscode.executeDocumentRenameProvider',
+        'file:///x.ts',
+        { line: 0, character: 5 },
+        'newName',
+      )
+      expect(observed).toEqual(['file:///x.ts', { line: 0, character: 5 }, 'newName'])
+      expect(result.applied).toBe(true)
+    })
+
+    test('records the invocation in executedCommands', async () => {
+      const r = createRuntime<
+        CommandRegistryShape,
+        ContextKeyRegistryShape,
+        ConfigRegistryShape,
+        StateRegistryShape,
+        EventRegistryShape,
+        ExternalCommandRegistry
+      >()
+      await r.executeExternalCommand('moveFileToTrash')
+      expect(vscode).toHaveExecutedCommand('moveFileToTrash')
     })
   })
 
@@ -344,3 +440,4 @@ type CommandRegistryShape = Record<string, { args: unknown; result: unknown }>
 type ContextKeyRegistryShape = Record<string, unknown>
 type ConfigRegistryShape = Record<string, unknown>
 type StateRegistryShape = Record<string, { value: unknown; scope: 'global' | 'workspace' }>
+type EventRegistryShape = Record<string, unknown>

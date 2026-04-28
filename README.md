@@ -21,7 +21,7 @@ The endpoint is an SDK where you can author a non-trivial extension without ever
 ## Principles
 
 1. **Declarative over imperative.** Anything that can be expressed as a typed declaration in the manifest belongs in the manifest. Anything that cannot, but should be statically describable (events, accessors, lifecycles), gets a typed runtime primitive.
-2. **One source of truth.** The manifest. `package.json`, registry types, and runtime bootstrap are *outputs* — never edited by hand.
+2. **One source of truth.** The manifest. `package.json`, registry types, and runtime bootstrap are _outputs_ — never edited by hand.
 3. **Type safety end to end.** A command id typoed in `executeCommand` is a compile error. A setting whose value type drifts from its schema is a compile error. A persistent state slot whose scope mismatches the manifest is a compile error.
 4. **No re-implementation, only re-shaping.** vsv is a surface over `vscode.*`, not a runtime replacement. Bugs and quirks are documented and routed; behavior is not duplicated.
 5. **Forcing-function development.** New surface area is admitted when an extension needs it. Theoretical completeness is not a goal; consumer-driven completeness is.

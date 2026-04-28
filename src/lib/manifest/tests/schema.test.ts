@@ -68,9 +68,7 @@ describe('Manifest', () => {
   })
 
   test('rejects missing publisher', () => {
-    expect(() =>
-      Schema.decodeUnknownSync(Manifest)({ _tag: 'Manifest', name: 'no-pub' }),
-    ).toThrow()
+    expect(() => Schema.decodeUnknownSync(Manifest)({ _tag: 'Manifest', name: 'no-pub' })).toThrow()
   })
 
   test('rejects empty publisher', () => {

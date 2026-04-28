@@ -25,6 +25,7 @@ export type {
   EditorHandle,
   EventHandle,
   EventRegistryShape,
+  ExternalCommandRegistryShape,
   FsHandle,
   NotifyHandle,
   PromptOptions,

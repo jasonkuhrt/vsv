@@ -79,28 +79,29 @@ completeness target.
 When closing a gap: add the typed primitive, JSDoc it, test against the
 mock, regenerate consumers, delete the raw `vscode.*` reach.
 
-### Foreign command typing — `ExternalCommandRegistry` threading
+### Foreign command typing — `ExternalCommandRegistry` threading — RESOLVED 2026-04-28
 
-The largest single gap. `ExternalCommandDecl` is currently doc-only because
-`createRuntime`'s typed `executeCommand` indexes only `CommandRegistry`, not
-`ExternalCommandRegistry`. Every foreign command call goes through raw
-`vscode.commands.executeCommand(...)` with manual casts. Real call sites in
-consumers:
+Closed by adding `EXR extends ExternalCommandRegistryShape` as a 6th generic
+on `Runtime` and `createRuntime`, plus a typed
+`executeExternalCommand<Id, R>(id, ...args)` method. Args declared as
+`Schema.Tuple(...)` in the manifest are spread positionally into VSCode's
+variadic `commands.executeCommand(id, ...args)` call. The optional second
+generic `R` lets callers pin opaque vscode runtime types
+(`WorkspaceEdit | undefined`, etc.) without a post-hoc `as` cast.
 
-- `revealInExplorer`
-- `list.expand`, `list.collapse`, `list.collapseAll`, `list.toggleExpand`,
-  `list.focusDown`, `list.focusUp`, `list.focusFirst`, `list.focusParent`
-- `workbench.files.action.collapseExplorerFolders`
-- `workbench.files.action.focusFilesExplorer`
-- `copyFilePath`, `copyRelativeFilePath`
-- `moveFileToTrash`
-- `vscode.executeDocumentRenameProvider`
-- `setContext`
+`vscode-explorer-delete` and `vscode-utils` migrated all 15 call sites:
 
-Design question: thread `ExternalCommandRegistry` as a 6th generic on
-`Runtime`, or split off `executeExternalCommand` as a separate typed method?
-Whichever route, populate the `built-in-catalog/commands.ts` (currently
-empty) so consumers don't redeclare the long tail.
+- `vscode-explorer-delete`: `moveFileToTrash`
+- `vscode-utils`: `vscode.executeDocumentRenameProvider`, `copyFilePath`,
+  `revealInExplorer`, `list.expand`, `list.collapse`,
+  `workbench.files.action.collapseExplorerFolders`
+
+**Still deferred:** populating `src/lib/builtin-catalog/commands.ts`. Until
+that lands, consumers redeclare each foreign command in their own
+`vsv.manifest.ts.externalCommands` array. The natural seed for the catalog
+is the union of declarations across all consumer manifests above, plus the
+12 `workbench.action.*` commands in `workbench-cycler` (which has not yet
+migrated to `executeExternalCommand` — separate work item).
 
 ### Foreign configuration
 
