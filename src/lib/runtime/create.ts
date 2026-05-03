@@ -856,7 +856,7 @@ export const createRuntime = <
       getWithDefault: (defaultValue: CFR[K]): CFR[K] => getCfg().get<CFR[K]>(key, defaultValue),
       update: (
         value: CFR[K] | undefined,
-        target: vscode.ConfigurationTarget = 2 /* Workspace */ as vscode.ConfigurationTarget,
+        target: vscode.ConfigurationTarget = vscode.ConfigurationTarget.Workspace,
       ): Effect.Effect<void, ConfigUpdateError> =>
         Effect.tryPromise({
           try: () => Promise.resolve(getCfg().update(key, value, target)),
@@ -894,7 +894,7 @@ export const createRuntime = <
       getWithDefault: (defaultValue: FCR[K]): FCR[K] => getCfg().get<FCR[K]>(fullKey, defaultValue),
       update: (
         value: FCR[K] | undefined,
-        target: vscode.ConfigurationTarget = 2 /* Workspace */ as vscode.ConfigurationTarget,
+        target: vscode.ConfigurationTarget = vscode.ConfigurationTarget.Workspace,
       ): Effect.Effect<void, ConfigUpdateError> =>
         Effect.tryPromise({
           try: () => Promise.resolve(getCfg().update(fullKey, value, target)),

@@ -88,9 +88,9 @@ Items 2–5 of the original list — all the test-mock gaps — were resolved in
 
 - **`Effect.gen` reserved for genuine multi-step flows.** Single-call wrappers use `Effect.tryPromise`/`Effect.promise` directly — no synthetic gen wrapping. `fs.realpath` could have used `Effect.gen` for its scheme-guard-then-realpath flow but uses an early-return `Effect.fail` for the guard followed by a single `Effect.tryPromise` instead, which reads more clearly than wrapping the whole thing in `gen` for a single yield. The general bias remains: prefer `Effect.gen` when you'd otherwise chain three or more pipe steps.
 
-**Consumer migration: critical scheduling**
+**Consumer migration: cost coming due**
 
-This migration is a **breaking change** for consumer extensions. Every existing `await rt.notify.*`, `await rt.workspace.applyEdit(...)`, `await rt.tabs.close(...)`, etc. in `vscode-utils`, `vscode-session`, `vscode-explorer-delete`, and `workbench-cycler` now `await`s an `Effect`, which resolves to the Effect value itself **without ever running it**. Result: notifications won't display, edits won't apply, tabs won't close, commands silently no-op. The four consumer extensions must be migrated to `Effect.gen`/`yield*` immediately after this commit lands. Until then, those extensions are functionally broken at runtime even though they may compile.
+The four consumer extensions (`vscode-utils`, `vscode-session`, `vscode-explorer-delete`, `workbench-cycler`) were written against the prior Promise-based runtime. With this commit on `main`, every existing `await rt.notify.*`, `await rt.workspace.applyEdit(...)`, `await rt.tabs.close(...)` etc. in those extensions awaits an `Effect`, which resolves to the Effect value itself without ever running it — the no-op surfaces every command path. This is the **cost of the prior shape coming due**, not a regression introduced here: the Promise-based runtime was tech debt accepted earlier, the Effect runtime is the correct shape, and the price of paying that debt is migrating each consumer's call sites. The four extensions get migrated immediately after this lands; the no-op window is the natural pressure that forces the cleanup rather than letting it sit indefinitely.
 
 **Test surface additions**
 

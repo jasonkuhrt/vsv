@@ -16,6 +16,7 @@ import {
   StateUpdateError,
   UnsupportedSchemeError,
 } from '../errors.ts'
+import { ConfigurationTarget } from '../values.ts'
 
 const vscode = installVSCodeMock()
 
@@ -294,7 +295,7 @@ describe('createRuntime', () => {
         ForeignConfigRegistry
       >()
       const handle = r.defineForeignConfig('editor.codeLens')
-      await Effect.runPromise(handle.update(true, 1 /* Global */ as never))
+      await Effect.runPromise(handle.update(true, ConfigurationTarget.Global))
       expect(handle.inspect()?.globalValue).toBe(true)
     })
 
@@ -312,9 +313,9 @@ describe('createRuntime', () => {
       const handle = r.defineForeignConfig('explorer.confirmDelete')
       const original = handle.inspect()?.globalValue
       expect(original).toBe(true)
-      await Effect.runPromise(handle.update(false, 1 /* Global */ as never))
+      await Effect.runPromise(handle.update(false, ConfigurationTarget.Global))
       expect(handle.inspect()?.globalValue).toBe(false)
-      await Effect.runPromise(handle.update(original ?? true, 1 /* Global */ as never))
+      await Effect.runPromise(handle.update(original ?? true, ConfigurationTarget.Global))
       expect(handle.inspect()?.globalValue).toBe(true)
     })
 
@@ -343,7 +344,7 @@ describe('createRuntime', () => {
     test('reflects per-target writes from update', async () => {
       const r = createRuntime<CommandRegistryShape, ContextKeyRegistryShape, ConfigRegistry>()
       const handle = r.defineConfig('enabled')
-      await Effect.runPromise(handle.update(true, 1 /* Global */ as never))
+      await Effect.runPromise(handle.update(true, ConfigurationTarget.Global))
       const ins = handle.inspect()
       expect(ins?.globalValue).toBe(true)
       expect(ins?.workspaceValue).toBeUndefined()
@@ -367,7 +368,7 @@ describe('createRuntime', () => {
         }
       }
       try {
-        const exit = await Effect.runPromiseExit(handle.update(true, 1 /* Global */ as never))
+        const exit = await Effect.runPromiseExit(handle.update(true, ConfigurationTarget.Global))
         expect(Exit.isFailure(exit)).toBe(true)
         if (Exit.isFailure(exit)) {
           const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
