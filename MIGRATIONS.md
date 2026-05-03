@@ -66,6 +66,34 @@ Items 2–5 of the original list — all the test-mock gaps — were resolved in
 
 **Boundary semantics for `getWordRangeAtPosition` — VERIFIED 2026-04-28.** VSCode's `TextModel.getWordAtPosition` treats `column == end-of-word` as inside the word (cursor-just-past-last-char still matches). The mock implements the equivalent (`start <= pos <= end`) and a dedicated test now pins the four boundary positions for `"foo bar"` (positions 0, 3, 4, 7). Documented in `src/lib/runtime-test/tests/vscode-mock-extended.test.ts`.
 
+### Resolved (continued)
+
+**Effect-native runtime — RESOLVED 2026-05-03.** Every Promise-returning method on the runtime now returns `Effect.Effect<A, E>` with a typed error channel. Sync getters and inherently-sync operations (`workspace.updateFolders`, `statusBar.message`, `disposables`, `defineCommand`'s return, `EventHandle.{fire,event,dispose}`, all `*.get`/`*.getWithDefault`/`*.inspect`/`*.onChange` accessors) stay sync. Consumer extensions (`vscode-utils`, `vscode-session`, `vscode-explorer-delete`, `workbench-cycler`) migrate separately — this entry covers the underlying infra only.
+
+**Design choices**
+
+- **`Data.TaggedError` (not `Schema.TaggedError`).** Runtime errors don't need schema validation or parsing; `Data.TaggedError` from `effect` gives a plain class with `_tag` discrimination, integrates with `Effect.catchTag`/`Effect.catchTags`/`Match.tag` exhaustively, and avoids carrying a parser around at runtime. `manifest/schema.ts` continues to use `Schema.TaggedClass` for _data_ types where parsing matters.
+
+- **Error hierarchy: high-signal splits + per-surface catch-alls.** Two failure modes get distinct tags because consumers branch on them routinely (`FileNotFoundError`, `UnsupportedSchemeError`). Everything else collapses into one catch-all per surface (`FsError`, `CommandExecutionError`, `DocumentOpenError`, `WorkspaceEditError`, `ConfigUpdateError`, `StateUpdateError`, `ClipboardError`) carrying the original error on a `cause: unknown` field. `RuntimeError` is exported as a union of every error type for callers spanning multiple surfaces.
+
+- **No backward compatibility for `defineCommand` handlers.** Handlers must return `Effect.Effect<R, E, never>` — no sync or `async`/`await` overload. Per the user's "complete cut" rule (`CLAUDE.md`: "never move now, remodel later"), the alternative would have been a sync overload `(args) => R | Effect<R, ...>`, but a tri-shape handler signature creates inference instability and a permanent backward-compat surface. The runtime bridges to vscode at the boundary via `Effect.runPromise(handler(args))` so handler failures still surface as rejected Promises in vscode's command-failure path.
+
+- **`workspace.updateFolders` stays sync.** VSCode's underlying `vscode.workspace.updateWorkspaceFolders` is genuinely synchronous and returns `boolean`. Wrapping in `Effect.sync` would lie about the cost model — there is no async work, no failure channel, no fiber suspension. Callers in `Effect.gen` blocks call it directly without `yield*`. Same rationale for `statusBar.message`, `disposables`, and `EventHandle`'s sync trio.
+
+- **`onChange` callbacks stay callback-shaped, not `Stream<T>`.** The migration is Promise→Effect, not callback→Stream. Reshaping `onChange` would be a bigger redesign with bigger consumer impact; the current callback shape is a thin disposable wrapper around `vscode.EventEmitter`/`onDidChangeConfiguration` that doesn't benefit from Effect typing.
+
+- **`applyEdit` keeps `boolean` in the success channel.** VSCode distinguishes "edit accepted but rolled back due to conflicts" (`Promise<false>`) from "API call itself errored" (rejected). The former is meaningful success-channel data; the latter is `WorkspaceEditError`. Collapsing both into the error channel would lose information.
+
+- **Initial `setContext` in `defineContextKey` stays fire-and-forget.** VSCode updates context state synchronously inside `executeCommand`'s body before the IPC roundtrip resolves, so subsequent reads see the initial value even though the Effect-returning `set` is the only awaited path. The alternative — making `defineContextKey` itself return `Effect<ContextKeyHandle, …>` — adds friction (every caller must `yield*` the construction) for a guarantee VSCode already provides synchronously.
+
+- **`Effect.gen` over `.pipe` in test bodies and impl.** Where a multi-step flow exists (`fs.realpath`'s scheme guard + Node fs call), `Effect.gen` reads like async/await and minimizes friction for migrating from Promise-style. Single-call wrappers use `Effect.tryPromise`/`Effect.promise` directly — no synthetic gen wrapping.
+
+**Test surface additions**
+
+- `vscode-mock.ts` gains `workspace.updateWorkspaceFolders` and `window.showOpenDialog` plus `__state.{getUpdateFolderCalls,setNextUpdateFoldersResult,getOpenDialogCalls,setNextOpenDialogResult}` for behavioral assertions.
+- New tests: `workspace.updateFolders` (success + rejected splice), `window.showOpenDialog` (selection + dismissal), `fs.realpath` (resolves real symlink in `os.tmpdir()`, broken symlink → `FileNotFoundError`, non-file scheme → `UnsupportedSchemeError`, non-existent path → `FileNotFoundError`).
+- New error-path tests for `defineCommand` (handler failure → `CommandExecutionError`), `executeExternalCommand` (rejection → `CommandExecutionError`), `executeCommandRaw` (rejection → `CommandExecutionError`), `defineConfig.update` (write rejection → `ConfigUpdateError`), `defineState.set` (memento rejection → `StateUpdateError`), `clipboard.readText` (IPC failure → `ClipboardError`), `workspace.openTextDocument` (provider rejection → `DocumentOpenError`).
+
 ### Open
 
 _(none — all open follow-ups have been addressed.)_

@@ -1,5 +1,17 @@
 export { createRuntime } from '#lib/runtime/create'
 export {
+  ClipboardError,
+  CommandExecutionError,
+  ConfigUpdateError,
+  DocumentOpenError,
+  FileNotFoundError,
+  FsError,
+  StateUpdateError,
+  UnsupportedSchemeError,
+  WorkspaceEditError,
+} from '#lib/runtime/errors'
+export type { RuntimeError } from '#lib/runtime/errors'
+export {
   ConfigurationTarget,
   FileType,
   Position,
@@ -33,9 +45,11 @@ export type {
   PromptOptions,
   QuickPickItem,
   Runtime,
+  ShowOpenDialogOptions,
   StatusBarHandle,
   StateHandle,
   StateRegistryShape,
   TabsHandle,
+  WindowHandle,
   WorkspaceHandle,
 } from '#lib/runtime/create'

@@ -330,6 +330,22 @@ export interface FileStat {
   size: number
 }
 
+interface UpdateFoldersCall {
+  start: number
+  deleteCount: number | null | undefined
+  adds: ReadonlyArray<{ uri: Uri; name?: string }>
+}
+
+interface OpenDialogOptionsRecord {
+  defaultUri?: Uri
+  openLabel?: string
+  canSelectFiles?: boolean
+  canSelectFolders?: boolean
+  canSelectMany?: boolean
+  filters?: { readonly [name: string]: ReadonlyArray<string> }
+  title?: string
+}
+
 interface MockState {
   registeredCommands: Map<string, CommandHandler>
   executedCommands: ExecutedCommand[]
@@ -351,6 +367,11 @@ interface MockState {
   workspaceFolders: WorkspaceFolder[] | undefined
   fsEntries: Map<string, ReadonlyArray<[string, FileType]>>
   fsStats: Map<string, FileStat>
+  fsRealpath: Map<string, string | Error>
+  updateFoldersCalls: UpdateFoldersCall[]
+  nextUpdateFoldersResult: boolean
+  shownOpenDialogs: Array<{ options: OpenDialogOptionsRecord }>
+  nextOpenDialogResult: readonly Uri[] | undefined
 }
 
 export interface WorkspaceFolder {
@@ -380,6 +401,11 @@ const state: MockState = {
   workspaceFolders: undefined,
   fsEntries: new Map(),
   fsStats: new Map(),
+  fsRealpath: new Map(),
+  updateFoldersCalls: [],
+  nextUpdateFoldersResult: true,
+  shownOpenDialogs: [],
+  nextOpenDialogResult: undefined,
 }
 
 const mergedConfigValue = (entry: ConfigurationEntry): unknown => {
@@ -544,6 +570,18 @@ export const workspace = {
     }
     return true
   },
+  updateWorkspaceFolders: (
+    start: number,
+    deleteCount: number | null | undefined,
+    ...adds: ReadonlyArray<{ readonly uri: Uri; readonly name?: string }>
+  ): boolean => {
+    state.updateFoldersCalls.push({
+      start,
+      deleteCount,
+      adds: adds.map((a) => (a.name === undefined ? { uri: a.uri } : { uri: a.uri, name: a.name })),
+    })
+    return state.nextUpdateFoldersResult
+  },
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -600,6 +638,23 @@ export const window = {
   setStatusBarMessage: (message: string, hideAfterTimeout?: number) => {
     state.statusBarMessages.push({ message, hideAfterTimeout })
     return { dispose: (): void => {} }
+  },
+  showOpenDialog: async (
+    options?: OpenDialogOptionsRecord,
+  ): Promise<readonly Uri[] | undefined> => {
+    // Snapshot the options object so later mutation by the caller doesn't
+    // retroactively alter recorded test state.
+    const recorded: OpenDialogOptionsRecord = {}
+    if (options?.defaultUri !== undefined) recorded.defaultUri = options.defaultUri
+    if (options?.openLabel !== undefined) recorded.openLabel = options.openLabel
+    if (options?.canSelectFiles !== undefined) recorded.canSelectFiles = options.canSelectFiles
+    if (options?.canSelectFolders !== undefined)
+      recorded.canSelectFolders = options.canSelectFolders
+    if (options?.canSelectMany !== undefined) recorded.canSelectMany = options.canSelectMany
+    if (options?.filters !== undefined) recorded.filters = options.filters
+    if (options?.title !== undefined) recorded.title = options.title
+    state.shownOpenDialogs.push({ options: recorded })
+    return state.nextOpenDialogResult
   },
   get activeTextEditor(): TextEditor | undefined {
     return state.activeTextEditor
@@ -697,6 +752,11 @@ export const __state = {
     state.workspaceFolders = undefined
     state.fsEntries.clear()
     state.fsStats.clear()
+    state.fsRealpath.clear()
+    state.updateFoldersCalls = []
+    state.nextUpdateFoldersResult = true
+    state.shownOpenDialogs = []
+    state.nextOpenDialogResult = undefined
   },
 
   // Filesystem (mock)
@@ -816,5 +876,19 @@ export const __state = {
     const pos = cursor instanceof Position ? cursor : new Position(cursor.line, cursor.character)
     state.activeTextEditor = { document: doc, selection: new Selection(pos, pos) }
     return doc
+  },
+
+  // Workspace folder splice — recorded calls + seedable result
+  getUpdateFolderCalls: (): ReadonlyArray<UpdateFoldersCall> => [...state.updateFoldersCalls],
+  setNextUpdateFoldersResult: (result: boolean): void => {
+    state.nextUpdateFoldersResult = result
+  },
+
+  // Open dialog — recorded calls + seedable result
+  getOpenDialogCalls: (): ReadonlyArray<{ options: OpenDialogOptionsRecord }> => [
+    ...state.shownOpenDialogs,
+  ],
+  setNextOpenDialogResult: (result: readonly Uri[] | undefined): void => {
+    state.nextOpenDialogResult = result
   },
 }
