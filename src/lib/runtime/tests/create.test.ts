@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { Effect, Exit } from 'effect'
+import { Data, Effect, Exit } from 'effect'
 import * as nodeFs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -98,13 +98,39 @@ describe('createRuntime', () => {
 
     test('handler failure surfaces as CommandExecutionError on executeCommand', async () => {
       const r = createRuntime<CommandRegistry>()
-      r.defineCommand('vsv.fail', () => Effect.fail(new Error('boom') as unknown))
+      r.defineCommand('vsv.fail', () => Effect.fail(new Error('boom')))
       const exit = await Effect.runPromiseExit(r.executeCommand('vsv.fail', undefined))
       expect(Exit.isFailure(exit)).toBe(true)
       if (Exit.isFailure(exit)) {
         const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
         expect(err).toBeInstanceOf(CommandExecutionError)
         expect((err as CommandExecutionError).id).toBe('vsv.fail')
+      }
+    })
+
+    test('handler tagged-error identity is preserved through the bridge', async () => {
+      // The bridge thunk in defineCommand uses runPromiseExit + Cause.failureOption
+      // to project the failure into a plain throwable that preserves the original
+      // Data.TaggedError instance. This pins that contract: a consumer matching
+      // on `CommandExecutionError.cause._tag` should see the handler's original
+      // tag, not Effect's `FiberFailure` wrapper.
+      class HandlerSpecificError extends Data.TaggedError('HandlerSpecificError')<{
+        readonly detail: string
+      }> {}
+      const r = createRuntime<CommandRegistry>()
+      r.defineCommand('vsv.fail', () =>
+        Effect.fail(new HandlerSpecificError({ detail: 'precise' })),
+      )
+      const exit = await Effect.runPromiseExit(r.executeCommand('vsv.fail', undefined))
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit) && exit.cause._tag === 'Fail') {
+        const outer = exit.cause.error
+        expect(outer).toBeInstanceOf(CommandExecutionError)
+        const inner = outer.cause
+        expect(inner).toBeInstanceOf(HandlerSpecificError)
+        // _tag identity survives the round-trip; consumers can `Match.tag` on it.
+        expect((inner as HandlerSpecificError)._tag).toBe('HandlerSpecificError')
+        expect((inner as HandlerSpecificError).detail).toBe('precise')
       }
     })
   })
@@ -383,6 +409,42 @@ describe('createRuntime', () => {
       d.dispose()
       await Effect.runPromise(handle.set('off'))
       expect(count).toBe(1)
+    })
+
+    test('a throwing listener does not abort sibling listeners or the Effect', async () => {
+      // The listener loop runs each callback in isolation: failures are
+      // swallowed (and logged) rather than rejecting the never-typed Effect or
+      // skipping siblings. This is critical because `set` has a `never` error
+      // channel — a throwing listener would otherwise become a defect that
+      // crashes the calling fiber.
+      const r = createRuntime<CommandRegistryShape, ContextKeyRegistry>()
+      const handle = r.defineContextKey('vsv.isActive', false)
+      // Silence console.error for this test — the impl logs each listener
+      // throw, which would otherwise spam test output.
+      const originalError = console.error
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      console.error = () => {}
+      try {
+        let firstCalled = false
+        let thirdCalled = false
+        handle.onChange(() => {
+          firstCalled = true
+        })
+        handle.onChange(() => {
+          throw new Error('listener crash — should be isolated')
+        })
+        handle.onChange(() => {
+          thirdCalled = true
+        })
+        // Effect must succeed even though one listener threw.
+        await Effect.runPromise(handle.set(true))
+        expect(firstCalled).toBe(true)
+        expect(thirdCalled).toBe(true)
+        // State mutation still landed.
+        expect(handle.get()).toBe(true)
+      } finally {
+        console.error = originalError
+      }
     })
   })
 

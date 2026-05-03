@@ -367,7 +367,6 @@ interface MockState {
   workspaceFolders: WorkspaceFolder[] | undefined
   fsEntries: Map<string, ReadonlyArray<[string, FileType]>>
   fsStats: Map<string, FileStat>
-  fsRealpath: Map<string, string | Error>
   updateFoldersCalls: UpdateFoldersCall[]
   nextUpdateFoldersResult: boolean
   shownOpenDialogs: Array<{ options: OpenDialogOptionsRecord }>
@@ -401,7 +400,6 @@ const state: MockState = {
   workspaceFolders: undefined,
   fsEntries: new Map(),
   fsStats: new Map(),
-  fsRealpath: new Map(),
   updateFoldersCalls: [],
   nextUpdateFoldersResult: true,
   shownOpenDialogs: [],
@@ -570,6 +568,13 @@ export const workspace = {
     }
     return true
   },
+  // Fidelity gap: this records the splice request and returns the seeded
+  // result, but does NOT mutate `state.workspaceFolders` to reflect the
+  // applied splice. Tests doing "splice + read folders" should pre-seed the
+  // post-splice state via `__state.setWorkspaceFolders(...)` rather than
+  // relying on the mock to compute it. Real VSCode performs the mutation
+  // synchronously; replicating its full semantics (multi-root auto-promotion,
+  // workspace re-open) is out of scope — the mock exists to verify call shape.
   updateWorkspaceFolders: (
     start: number,
     deleteCount: number | null | undefined,
@@ -752,7 +757,6 @@ export const __state = {
     state.workspaceFolders = undefined
     state.fsEntries.clear()
     state.fsStats.clear()
-    state.fsRealpath.clear()
     state.updateFoldersCalls = []
     state.nextUpdateFoldersResult = true
     state.shownOpenDialogs = []

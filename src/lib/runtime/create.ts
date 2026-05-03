@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Cause, Effect, Exit } from 'effect'
 import * as fs from 'node:fs'
 import * as vscode from 'vscode'
 import {
@@ -361,9 +361,11 @@ export interface FsHandle {
    * `fs.promises.realpath`. For remote/virtual URIs the operation is undefined
    * and the wrapper refuses rather than silently misbehaving.
    *
-   * Fails with `FileNotFoundError` if the path does not exist; `FsError`
-   * (cause: `ENOENT` chain or other Node `errno`) for broken symlinks and
-   * permission failures.
+   * Fails with `FileNotFoundError` if the path does not exist **or the symlink
+   * target is missing** (broken symlinks throw `ENOENT` from Node fs, which
+   * `toFsError` collapses into `FileNotFoundError`). `FsError` covers
+   * non-ENOENT failures: permission denied (`EACCES`), too-many-symlinks
+   * (`ELOOP`), busy resource (`EBUSY`), etc.
    */
   realpath: (
     uri: vscode.Uri,
@@ -753,10 +755,21 @@ export const createRuntime = <
     handler: (args: CR[Id]['args']) => Effect.Effect<CR[Id]['result'], unknown>,
   ): vscode.Disposable => {
     // Bridge: vscode.commands.registerCommand expects a thunk that returns a
-    // value or Promise. Run the consumer's Effect with `Effect.runPromise` so
-    // failures surface as rejected Promises (VSCode's command-failure path).
-    const thunk = (args: CR[Id]['args']): Promise<CR[Id]['result']> =>
-      Effect.runPromise(handler(args))
+    // value or Promise. We run the consumer's Effect with `Effect.runPromiseExit`
+    // (not `runPromise`) so we can project the Exit's cause into a plain
+    // throwable that preserves the original tagged-error identity. Plain
+    // `runPromise` rejects with `FiberFailure` wrapping the cause, which loses
+    // tag identity for downstream `executeCommand` callers matching on
+    // `CommandExecutionError.cause._tag`.
+    const thunk = async (args: CR[Id]['args']): Promise<CR[Id]['result']> => {
+      const exit = await Effect.runPromiseExit(handler(args))
+      if (Exit.isSuccess(exit)) return exit.value
+      const failure = Cause.failureOption(exit.cause)
+      // `Some` → original Fail<E> error; preserves Data.TaggedError instance
+      // identity. `None` → defect or interrupt, fall back to `Cause.squash`
+      // which materializes the cause as a throwable.
+      throw failure._tag === 'Some' ? failure.value : Cause.squash(exit.cause)
+    }
     return vscode.commands.registerCommand(id, thunk as (...args: unknown[]) => unknown)
   },
 
@@ -810,8 +823,17 @@ export const createRuntime = <
         Effect.promise(async () => {
           current = value
           await vscode.commands.executeCommand('setContext', key, value)
+          // Each listener runs in isolation: a throwing listener should not
+          // prevent siblings from receiving the event, and must not promote
+          // the never-typed Effect failure channel into a defect. Errors are
+          // logged and swallowed — listeners are observation hooks, not
+          // commits, so failure here is non-fatal.
           for (const l of listeners) {
-            l(value)
+            try {
+              l(value)
+            } catch (err) {
+              console.error(`vsv: context-key '${key}' listener threw`, err)
+            }
           }
         }),
       get: (): CKR[K] => current,
