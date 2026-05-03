@@ -88,9 +88,16 @@ Items 2–5 of the original list — all the test-mock gaps — were resolved in
 
 - **`Effect.gen` reserved for genuine multi-step flows.** Single-call wrappers use `Effect.tryPromise`/`Effect.promise` directly — no synthetic gen wrapping. `fs.realpath` could have used `Effect.gen` for its scheme-guard-then-realpath flow but uses an early-return `Effect.fail` for the guard followed by a single `Effect.tryPromise` instead, which reads more clearly than wrapping the whole thing in `gen` for a single yield. The general bias remains: prefer `Effect.gen` when you'd otherwise chain three or more pipe steps.
 
-**Consumer migration: cost coming due**
+**Consumer migration: cost coming due (paid)**
 
-The four consumer extensions (`vscode-utils`, `vscode-session`, `vscode-explorer-delete`, `workbench-cycler`) were written against the prior Promise-based runtime. With this commit on `main`, every existing `await rt.notify.*`, `await rt.workspace.applyEdit(...)`, `await rt.tabs.close(...)` etc. in those extensions awaits an `Effect`, which resolves to the Effect value itself without ever running it — the no-op surfaces every command path. This is the **cost of the prior shape coming due**, not a regression introduced here: the Promise-based runtime was tech debt accepted earlier, the Effect runtime is the correct shape, and the price of paying that debt is migrating each consumer's call sites. The four extensions get migrated immediately after this lands; the no-op window is the natural pressure that forces the cleanup rather than letting it sit indefinitely.
+The four consumer extensions (`vscode-utils`, `vscode-session`, `vscode-explorer-delete`, `workbench-cycler`) were written against the prior Promise-based runtime. With the runtime change on `main`, every existing `await rt.notify.*`, `await rt.workspace.applyEdit(...)`, `await rt.tabs.close(...)` etc. in those extensions awaited an `Effect`, which resolves to the Effect value itself without ever running it — every command path no-op'd. This was the **cost of the prior shape coming due**, not a regression introduced here: the Promise-based runtime was tech debt accepted earlier, the Effect runtime is the correct shape, and the price of paying that debt was migrating each consumer's call sites. All four extensions migrated in lockstep:
+
+- `vscode-utils`: commit `3ec981b` — 11 files, every handler converted to `Effect.gen`. Bonus: `addResolvedFolderToWorkspace` dropped its prior "raw vscode for showOpenDialog/updateWorkspaceFolders" deviation (those wrappers now exist on `rt.window` / `rt.workspace`) and `fs.realpathSync`/`statSync` calls migrated to `rt.fs.realpath`/`stat` for typed-error branching.
+- `vscode-session`: commit `538ed09` — handler converted to `Effect.gen`, eager activation scan + `onDidChangeFolders` callback bridge through `Effect.runPromise` at the sync-vscode-API boundary.
+- `vscode-explorer-delete`: commit `c13296b` — `try/finally`-with-restore pattern translated to `Effect.ensuring` + `Effect.either`/`Effect.ignore`. Error branching now matches typed tags (`ConfigUpdateError` vs `CommandExecutionError`) rather than parsing exception messages.
+- `workbench-cycler`: commit `c13cfbf` — handlers converted; `presets.ts` retains raw `vscode.commands.executeCommand` for the 12 workbench commands not yet declared as `externalCommands` (separate scope), bridged via `Effect.promise(() => applyPreset(name))`.
+
+Every extension's `.oxlintrc.json` gained an allowlist for `_tag` and `_op` discriminators so Effect's tagged-class pattern doesn't trip `no-underscore-dangle`. This is now a standard pattern for any project using `effect`'s tagged unions.
 
 **Test surface additions**
 
