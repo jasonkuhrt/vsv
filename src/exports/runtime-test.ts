@@ -4,5 +4,7 @@ export { installVSCodeMock } from '#lib/runtime-test/install-mock'
 export type { InstalledMock } from '#lib/runtime-test/install-mock'
 export { spyOnCommands, withContextKeys } from '#lib/runtime-test/spies'
 export type { CommandSpy } from '#lib/runtime-test/spies'
+export { MockQuickPick } from '#lib/runtime-test/vscode-mock'
+export type { QuickPickItem } from '#lib/runtime-test/vscode-mock'
 
 import '#lib/runtime-test/matchers'

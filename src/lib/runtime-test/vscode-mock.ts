@@ -354,9 +354,15 @@ interface MockState {
   configurationChanges: ConfigurationChange[]
   shownQuickPicks: unknown[]
   nextQuickPickResult: unknown
+  createdQuickPicks: MockQuickPick<QuickPickItem>[]
   shownInputBoxes: Array<{ options: unknown }>
   nextInputBoxResult: string | undefined
-  shownMessages: Array<{ level: 'info' | 'warn' | 'error'; message: string }>
+  shownMessages: Array<{
+    level: 'info' | 'warn' | 'error'
+    message: string
+    actions: readonly string[]
+  }>
+  nextMessageResult: string | undefined
   statusBarMessages: StatusBarMessage[]
   tabGroups: MockTabGroup[]
   closedTabs: MockTab[]
@@ -367,6 +373,7 @@ interface MockState {
   workspaceFolders: WorkspaceFolder[] | undefined
   fsEntries: Map<string, ReadonlyArray<[string, FileType]>>
   fsStats: Map<string, FileStat>
+  fsContents: Map<string, Uint8Array>
   updateFoldersCalls: UpdateFoldersCall[]
   nextUpdateFoldersResult: boolean
   shownOpenDialogs: Array<{ options: OpenDialogOptionsRecord }>
@@ -387,9 +394,11 @@ const state: MockState = {
   configurationChanges: [],
   shownQuickPicks: [],
   nextQuickPickResult: undefined,
+  createdQuickPicks: [],
   shownInputBoxes: [],
   nextInputBoxResult: undefined,
   shownMessages: [],
+  nextMessageResult: undefined,
   statusBarMessages: [],
   tabGroups: [],
   closedTabs: [],
@@ -400,6 +409,7 @@ const state: MockState = {
   workspaceFolders: undefined,
   fsEntries: new Map(),
   fsStats: new Map(),
+  fsContents: new Map(),
   updateFoldersCalls: [],
   nextUpdateFoldersResult: true,
   shownOpenDialogs: [],
@@ -545,6 +555,31 @@ export const workspace = {
       }
       return stat
     },
+    readFile: async (uri: Uri): Promise<Uint8Array> => {
+      const content = state.fsContents.get(uri.fsPath)
+      if (!content) {
+        const err = new Error(`ENOENT: ${uri.fsPath}`)
+        ;(err as { code?: string }).code = 'FileNotFound'
+        throw err
+      }
+      return content
+    },
+    writeFile: async (uri: Uri, content: Uint8Array): Promise<void> => {
+      state.fsContents.set(uri.fsPath, content)
+      state.fsStats.set(uri.fsPath, {
+        type: FileType.File,
+        ctime: 0,
+        mtime: 0,
+        size: content.byteLength,
+      })
+    },
+    createDirectory: async (uri: Uri): Promise<void> => {
+      // Recursive by VSCode's contract — idempotent if the directory already
+      // exists. The mock just records a directory stat at the path; tests
+      // that care about intermediate paths should seed them via setFsDirectory.
+      state.fsStats.set(uri.fsPath, { type: FileType.Directory, ctime: 0, mtime: 0, size: 0 })
+      if (!state.fsEntries.has(uri.fsPath)) state.fsEntries.set(uri.fsPath, [])
+    },
   },
   applyEdit: async (edit: WorkspaceEdit): Promise<boolean> => {
     state.appliedEdits.push(edit)
@@ -627,18 +662,18 @@ export const window = {
   },
   showInformationMessage: async (
     message: string,
-    ..._items: string[]
+    ...items: string[]
   ): Promise<string | undefined> => {
-    state.shownMessages.push({ level: 'info', message })
-    return undefined
+    state.shownMessages.push({ level: 'info', message, actions: [...items] })
+    return items.length > 0 ? state.nextMessageResult : undefined
   },
-  showWarningMessage: async (message: string, ..._items: string[]): Promise<string | undefined> => {
-    state.shownMessages.push({ level: 'warn', message })
-    return undefined
+  showWarningMessage: async (message: string, ...items: string[]): Promise<string | undefined> => {
+    state.shownMessages.push({ level: 'warn', message, actions: [...items] })
+    return items.length > 0 ? state.nextMessageResult : undefined
   },
-  showErrorMessage: async (message: string, ..._items: string[]): Promise<string | undefined> => {
-    state.shownMessages.push({ level: 'error', message })
-    return undefined
+  showErrorMessage: async (message: string, ...items: string[]): Promise<string | undefined> => {
+    state.shownMessages.push({ level: 'error', message, actions: [...items] })
+    return items.length > 0 ? state.nextMessageResult : undefined
   },
   setStatusBarMessage: (message: string, hideAfterTimeout?: number) => {
     state.statusBarMessages.push({ message, hideAfterTimeout })
@@ -665,6 +700,11 @@ export const window = {
     return state.activeTextEditor
   },
   tabGroups: tabGroupsApi,
+  createQuickPick: <T extends QuickPickItem = QuickPickItem>(): MockQuickPick<T> => {
+    const qp = new MockQuickPick<T>()
+    state.createdQuickPicks.push(qp as unknown as MockQuickPick<QuickPickItem>)
+    return qp
+  },
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -712,6 +752,121 @@ export class Disposable {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// quick pick (stateful — the createQuickPick API, not the showQuickPick promise)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface QuickPickItem {
+  readonly label: string
+  readonly description?: string
+  readonly detail?: string
+}
+
+/**
+ * Stateful mock of `vscode.QuickPick<T>`. Properties match the real API
+ * shape; lifecycle observable via `shown` / `disposed`. Test code
+ * simulates user interaction via the `__fire*` escape hatches.
+ */
+export class MockQuickPick<T extends QuickPickItem = QuickPickItem> {
+  title = ''
+  matchOnDescription = false
+  matchOnDetail = false
+  items: ReadonlyArray<T> = []
+  activeItems: ReadonlyArray<T> = []
+  selectedItems: ReadonlyArray<T> = []
+  value = ''
+  placeholder?: string
+  busy = false
+  enabled = true
+  canSelectMany = false
+
+  shown = false
+  disposed = false
+
+  private changeValueListeners = new Set<(value: string) => unknown>()
+  private acceptListeners = new Set<() => unknown>()
+  private hideListeners = new Set<() => unknown>()
+  private changeActiveListeners = new Set<(items: ReadonlyArray<T>) => unknown>()
+  private changeSelectionListeners = new Set<(items: ReadonlyArray<T>) => unknown>()
+
+  show(): void {
+    this.shown = true
+  }
+
+  hide(): void {
+    if (this.shown) {
+      this.shown = false
+      for (const l of this.hideListeners) l()
+    }
+  }
+
+  dispose(): void {
+    this.disposed = true
+    this.shown = false
+    this.changeValueListeners.clear()
+    this.acceptListeners.clear()
+    this.hideListeners.clear()
+    this.changeActiveListeners.clear()
+    this.changeSelectionListeners.clear()
+  }
+
+  onDidChangeValue(handler: (value: string) => unknown): Disposable {
+    this.changeValueListeners.add(handler)
+    return new Disposable(() => {
+      this.changeValueListeners.delete(handler)
+    })
+  }
+
+  onDidAccept(handler: () => unknown): Disposable {
+    this.acceptListeners.add(handler)
+    return new Disposable(() => {
+      this.acceptListeners.delete(handler)
+    })
+  }
+
+  onDidHide(handler: () => unknown): Disposable {
+    this.hideListeners.add(handler)
+    return new Disposable(() => {
+      this.hideListeners.delete(handler)
+    })
+  }
+
+  onDidChangeActive(handler: (items: ReadonlyArray<T>) => unknown): Disposable {
+    this.changeActiveListeners.add(handler)
+    return new Disposable(() => {
+      this.changeActiveListeners.delete(handler)
+    })
+  }
+
+  onDidChangeSelection(handler: (items: ReadonlyArray<T>) => unknown): Disposable {
+    this.changeSelectionListeners.add(handler)
+    return new Disposable(() => {
+      this.changeSelectionListeners.delete(handler)
+    })
+  }
+
+  // Test escape hatches — simulate user interaction. Names mirror
+  // `vscode.QuickPick`'s event names so test reads naturally:
+  //   `qp.__fireChangeValue('foo')` — user typed 'foo'
+  //   `qp.__fireAccept()`           — user pressed Enter on activeItems[0]
+  //   `qp.__fireHide()`             — user dismissed (Escape, click-away)
+
+  __fireChangeValue(value: string): void {
+    this.value = value
+    for (const l of this.changeValueListeners) l(value)
+  }
+
+  __fireAccept(): void {
+    for (const l of this.acceptListeners) l()
+  }
+
+  __fireHide(): void {
+    if (!this.shown) return
+    this.shown = false
+    for (const l of this.hideListeners) l()
+  }
+}
+
 export const ConfigurationTarget = {
   Global: 1,
   Workspace: 2,
@@ -744,9 +899,11 @@ export const __state = {
     state.configurationChanges = []
     state.shownQuickPicks = []
     state.nextQuickPickResult = undefined
+    state.createdQuickPicks = []
     state.shownInputBoxes = []
     state.nextInputBoxResult = undefined
     state.shownMessages = []
+    state.nextMessageResult = undefined
     state.statusBarMessages = []
     state.tabGroups = []
     state.closedTabs = []
@@ -757,6 +914,7 @@ export const __state = {
     state.workspaceFolders = undefined
     state.fsEntries.clear()
     state.fsStats.clear()
+    state.fsContents.clear()
     state.updateFoldersCalls = []
     state.nextUpdateFoldersResult = true
     state.shownOpenDialogs = []
@@ -771,6 +929,16 @@ export const __state = {
   setFsStat: (path: string, stat: FileStat): void => {
     state.fsStats.set(path, stat)
   },
+  setFsContent: (path: string, content: Uint8Array): void => {
+    state.fsContents.set(path, content)
+    state.fsStats.set(path, {
+      type: FileType.File,
+      ctime: 0,
+      mtime: 0,
+      size: content.byteLength,
+    })
+  },
+  getFsContent: (path: string): Uint8Array | undefined => state.fsContents.get(path),
 
   // Clipboard
   getClipboard: (): string => state.clipboard,
@@ -827,11 +995,18 @@ export const __state = {
     return { ...entry }
   },
 
-  // Quick picks
+  // Quick picks (showQuickPick — Promise-returning API)
   getShownQuickPicks: (): ReadonlyArray<unknown> => [...state.shownQuickPicks],
   setNextQuickPickResult: (value: unknown): void => {
     state.nextQuickPickResult = value
   },
+
+  // Quick picks (createQuickPick — stateful API)
+  getCreatedQuickPicks: (): ReadonlyArray<MockQuickPick<QuickPickItem>> => [
+    ...state.createdQuickPicks,
+  ],
+  getLastCreatedQuickPick: (): MockQuickPick<QuickPickItem> | undefined =>
+    state.createdQuickPicks[state.createdQuickPicks.length - 1],
 
   // Input box
   getShownInputBoxes: (): ReadonlyArray<{ options: unknown }> => [...state.shownInputBoxes],
@@ -840,9 +1015,14 @@ export const __state = {
   },
 
   // Messages
-  getShownMessages: (): ReadonlyArray<{ level: 'info' | 'warn' | 'error'; message: string }> => [
-    ...state.shownMessages,
-  ],
+  getShownMessages: (): ReadonlyArray<{
+    level: 'info' | 'warn' | 'error'
+    message: string
+    actions: readonly string[]
+  }> => [...state.shownMessages],
+  setNextMessageResult: (value: string | undefined): void => {
+    state.nextMessageResult = value
+  },
 
   // Status bar
   getStatusBarMessages: (): ReadonlyArray<StatusBarMessage> => [...state.statusBarMessages],
