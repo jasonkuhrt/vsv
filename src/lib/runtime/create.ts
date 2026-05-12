@@ -246,12 +246,24 @@ export interface PromptOptions {
  * boundary; user dismissal is a success-channel `undefined`.
  */
 export interface NotifyHandle {
-  /** Show a non-blocking informational message. Bottom-right toast. */
-  info: (text: string) => Effect.Effect<string | undefined>
-  /** Show a non-blocking warning message. Bottom-right toast with warning icon. */
-  warn: (text: string) => Effect.Effect<string | undefined>
-  /** Show a non-blocking error message. Bottom-right toast with error icon. */
-  error: (text: string) => Effect.Effect<string | undefined>
+  /**
+   * Show a non-blocking informational message. Bottom-right toast.
+   *
+   * Optional `actions` render as buttons on the toast. Yielded value is the
+   * label of the clicked button, or `undefined` if the user dismissed
+   * without acting. With no actions, always yields `undefined`.
+   */
+  info: (text: string, ...actions: ReadonlyArray<string>) => Effect.Effect<string | undefined>
+  /**
+   * Show a non-blocking warning message. Bottom-right toast with warning icon.
+   * Action buttons behave the same as `info`.
+   */
+  warn: (text: string, ...actions: ReadonlyArray<string>) => Effect.Effect<string | undefined>
+  /**
+   * Show a non-blocking error message. Bottom-right toast with error icon.
+   * Action buttons behave the same as `info`.
+   */
+  error: (text: string, ...actions: ReadonlyArray<string>) => Effect.Effect<string | undefined>
   /**
    * Show an input box at the top of the window. Yields the entered text,
    * or `undefined` if the user dismissed without confirming.
@@ -352,6 +364,35 @@ export interface FsHandle {
   ) => Effect.Effect<ReadonlyArray<[string, vscode.FileType]>, FileNotFoundError | FsError>
   /** Stat a file or directory. Fails with `FileNotFoundError` if the path doesn't exist. */
   stat: (uri: vscode.Uri) => Effect.Effect<vscode.FileStat, FileNotFoundError | FsError>
+  /**
+   * Read the entire file contents as a `Uint8Array`. Callers typically wrap
+   * the result with `new TextDecoder('utf-8').decode(bytes)` for text
+   * formats, or pass the bytes through directly for binary.
+   *
+   * Fails with `FileNotFoundError` if the file does not exist; `FsError`
+   * covers permission denied, IO errors, etc. Wraps `vscode.workspace.fs.readFile`
+   * so it works against any registered filesystem provider (local, virtual,
+   * remote), not just the local OS.
+   */
+  readFile: (uri: vscode.Uri) => Effect.Effect<Uint8Array, FileNotFoundError | FsError>
+  /**
+   * Write the file contents from a `Uint8Array`, replacing any existing
+   * contents. The parent directory must exist — call `createDirectory`
+   * first if you're not sure (it's idempotent and recursive).
+   *
+   * Fails with `FileNotFoundError` if the parent directory is missing;
+   * `FsError` covers permission denied, IO errors, read-only filesystems,
+   * etc. Wraps `vscode.workspace.fs.writeFile`.
+   */
+  writeFile: (uri: vscode.Uri, content: Uint8Array) => Effect.Effect<void, FileNotFoundError | FsError>
+  /**
+   * Create a directory and any missing parents. Idempotent — succeeds
+   * silently if the directory already exists.
+   *
+   * Fails with `FsError` for permission denied, read-only filesystems, etc.
+   * Wraps `vscode.workspace.fs.createDirectory` (which is recursive).
+   */
+  createDirectory: (uri: vscode.Uri) => Effect.Effect<void, FileNotFoundError | FsError>
   /**
    * Resolve symlinks in `uri` to the on-disk realpath. Yields a new URI.
    *
@@ -699,7 +740,16 @@ export interface Runtime<
  * etc.) since `realpath` drops to Node's fs module.
  */
 const toFsError =
-  (uri: vscode.Uri, operation: 'readDirectory' | 'stat' | 'realpath') =>
+  (
+    uri: vscode.Uri,
+    operation:
+      | 'readDirectory'
+      | 'stat'
+      | 'realpath'
+      | 'readFile'
+      | 'writeFile'
+      | 'createDirectory',
+  ) =>
   (cause: unknown): FileNotFoundError | FsError => {
     // Narrowing `unknown` to `{ code?: unknown }` so we can read the diagnostic
     // code without throwing on null / non-object causes. Lint can't see that
@@ -977,12 +1027,27 @@ export const createRuntime = <
     }),
 
   notify: {
-    info: (text: string): Effect.Effect<string | undefined> =>
-      Effect.promise(() => Promise.resolve(vscode.window.showInformationMessage(text))),
-    warn: (text: string): Effect.Effect<string | undefined> =>
-      Effect.promise(() => Promise.resolve(vscode.window.showWarningMessage(text))),
-    error: (text: string): Effect.Effect<string | undefined> =>
-      Effect.promise(() => Promise.resolve(vscode.window.showErrorMessage(text))),
+    info: (
+      text: string,
+      ...actions: ReadonlyArray<string>
+    ): Effect.Effect<string | undefined> =>
+      Effect.promise(() =>
+        Promise.resolve(vscode.window.showInformationMessage(text, ...actions)),
+      ),
+    warn: (
+      text: string,
+      ...actions: ReadonlyArray<string>
+    ): Effect.Effect<string | undefined> =>
+      Effect.promise(() =>
+        Promise.resolve(vscode.window.showWarningMessage(text, ...actions)),
+      ),
+    error: (
+      text: string,
+      ...actions: ReadonlyArray<string>
+    ): Effect.Effect<string | undefined> =>
+      Effect.promise(() =>
+        Promise.resolve(vscode.window.showErrorMessage(text, ...actions)),
+      ),
     prompt: (options: PromptOptions): Effect.Effect<string | undefined> =>
       Effect.promise(() => {
         // Build the vscode-shaped options object incrementally — passing
@@ -1059,6 +1124,24 @@ export const createRuntime = <
       Effect.tryPromise({
         try: () => Promise.resolve(vscode.workspace.fs.stat(uri)),
         catch: toFsError(uri, 'stat'),
+      }),
+    readFile: (uri: vscode.Uri): Effect.Effect<Uint8Array, FileNotFoundError | FsError> =>
+      Effect.tryPromise({
+        try: () => Promise.resolve(vscode.workspace.fs.readFile(uri)),
+        catch: toFsError(uri, 'readFile'),
+      }),
+    writeFile: (
+      uri: vscode.Uri,
+      content: Uint8Array,
+    ): Effect.Effect<void, FileNotFoundError | FsError> =>
+      Effect.tryPromise({
+        try: () => Promise.resolve(vscode.workspace.fs.writeFile(uri, content)),
+        catch: toFsError(uri, 'writeFile'),
+      }),
+    createDirectory: (uri: vscode.Uri): Effect.Effect<void, FileNotFoundError | FsError> =>
+      Effect.tryPromise({
+        try: () => Promise.resolve(vscode.workspace.fs.createDirectory(uri)),
+        catch: toFsError(uri, 'createDirectory'),
       }),
     realpath: (
       uri: vscode.Uri,

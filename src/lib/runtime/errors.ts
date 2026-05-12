@@ -30,13 +30,14 @@ import type * as vscode from 'vscode'
  * — consumers reach for `Effect.catchTag('FileNotFoundError', ...)` more often
  * than any other fs failure mode.
  *
- * Raised by: `rt.fs.readDirectory`, `rt.fs.stat`, `rt.fs.realpath` when the
- * underlying VSCode `FileSystemError` has `code === 'FileNotFound'` or the
- * Node `ErrnoException` has `code === 'ENOENT'`.
+ * Raised by: `rt.fs.readDirectory`, `rt.fs.stat`, `rt.fs.realpath`,
+ * `rt.fs.readFile` when the underlying VSCode `FileSystemError` has
+ * `code === 'FileNotFound'` or the Node `ErrnoException` has
+ * `code === 'ENOENT'`.
  */
 export class FileNotFoundError extends Data.TaggedError('FileNotFoundError')<{
   readonly uri: vscode.Uri
-  readonly operation: 'readDirectory' | 'stat' | 'realpath'
+  readonly operation: 'readDirectory' | 'stat' | 'realpath' | 'readFile' | 'writeFile' | 'createDirectory'
   readonly cause: unknown
 }> {}
 
@@ -64,7 +65,7 @@ export class UnsupportedSchemeError extends Data.TaggedError('UnsupportedSchemeE
  */
 export class FsError extends Data.TaggedError('FsError')<{
   readonly uri: vscode.Uri
-  readonly operation: 'readDirectory' | 'stat' | 'realpath'
+  readonly operation: 'readDirectory' | 'stat' | 'realpath' | 'readFile' | 'writeFile' | 'createDirectory'
   readonly cause: unknown
 }> {}
 

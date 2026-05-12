@@ -586,19 +586,42 @@ describe('createRuntime', () => {
       const r = createRuntime()
       await Effect.runPromise(r.notify.info('hello'))
       const msgs = vscode.state.getShownMessages()
-      expect(msgs).toEqual([{ level: 'info', message: 'hello' }])
+      expect(msgs).toEqual([{ level: 'info', message: 'hello', actions: [] }])
     })
 
     test('warn records at the warn level', async () => {
       const r = createRuntime()
       await Effect.runPromise(r.notify.warn('careful'))
-      expect(vscode.state.getShownMessages()).toEqual([{ level: 'warn', message: 'careful' }])
+      expect(vscode.state.getShownMessages()).toEqual([
+        { level: 'warn', message: 'careful', actions: [] },
+      ])
     })
 
     test('error records at the error level', async () => {
       const r = createRuntime()
       await Effect.runPromise(r.notify.error('boom'))
-      expect(vscode.state.getShownMessages()).toEqual([{ level: 'error', message: 'boom' }])
+      expect(vscode.state.getShownMessages()).toEqual([
+        { level: 'error', message: 'boom', actions: [] },
+      ])
+    })
+
+    test('action buttons forward through and return the user-clicked label', async () => {
+      const r = createRuntime()
+      vscode.state.setNextMessageResult('Retry')
+      const picked = await Effect.runPromise(
+        r.notify.error('failed', 'Retry', 'Cancel'),
+      )
+      expect(picked).toBe('Retry')
+      expect(vscode.state.getShownMessages()).toEqual([
+        { level: 'error', message: 'failed', actions: ['Retry', 'Cancel'] },
+      ])
+    })
+
+    test('no-action notifications always yield undefined regardless of seeded result', async () => {
+      const r = createRuntime()
+      vscode.state.setNextMessageResult('IGNORED')
+      const picked = await Effect.runPromise(r.notify.info('plain'))
+      expect(picked).toBeUndefined()
     })
 
     test('prompt forwards options and returns the seeded input', async () => {
@@ -857,6 +880,47 @@ describe('createRuntime', () => {
         expect(err).toBeInstanceOf(FileNotFoundError)
         expect((err as FileNotFoundError).operation).toBe('stat')
       }
+    })
+
+    test('readFile returns seeded contents', async () => {
+      const r = createRuntime()
+      const fileUri = { fsPath: '/repo/menus.json' } as unknown as import('vscode').Uri
+      const content = new TextEncoder().encode('{"version":1}')
+      vscode.state.setFsContent('/repo/menus.json', content)
+      const bytes = await Effect.runPromise(r.fs.readFile(fileUri))
+      expect(new TextDecoder().decode(bytes)).toBe('{"version":1}')
+    })
+
+    test('readFile on missing path fails with FileNotFoundError', async () => {
+      const r = createRuntime()
+      const fileUri = { fsPath: '/nope' } as unknown as import('vscode').Uri
+      const exit = await Effect.runPromiseExit(r.fs.readFile(fileUri))
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) {
+        const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
+        expect(err).toBeInstanceOf(FileNotFoundError)
+        expect((err as FileNotFoundError).operation).toBe('readFile')
+      }
+    })
+
+    test('writeFile records contents readable via readFile', async () => {
+      const r = createRuntime()
+      const fileUri = { fsPath: '/repo/out.txt' } as unknown as import('vscode').Uri
+      const content = new TextEncoder().encode('hello')
+      await Effect.runPromise(r.fs.writeFile(fileUri, content))
+      const round = await Effect.runPromise(r.fs.readFile(fileUri))
+      expect(new TextDecoder().decode(round)).toBe('hello')
+    })
+
+    test('createDirectory is idempotent', async () => {
+      const r = createRuntime()
+      const dirUri = { fsPath: '/repo/new' } as unknown as import('vscode').Uri
+      await Effect.runPromise(r.fs.createDirectory(dirUri))
+      // Second call must not throw — VSCode's createDirectory is recursive
+      // and idempotent by contract.
+      await Effect.runPromise(r.fs.createDirectory(dirUri))
+      const stat = await Effect.runPromise(r.fs.stat(dirUri))
+      expect(stat.type).toBe(2 /* Directory */)
     })
   })
 
