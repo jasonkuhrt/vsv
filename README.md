@@ -157,3 +157,8 @@ If you're using vsv to author an extension and you find yourself reaching past i
 Either way, your extension becomes the forcing function that pushes vsv closer to its perfectest form.
 
 See [`COLDSTART.md`](./COLDSTART.md) for the full specification and [`TODO.md`](./TODO.md) for deferred work.
+
+## Related projects
+
+- **`@jasonkuhrt/key-binder`** — cross-editor keybinding source of truth. Emits `keybindings.json` (VS Code, per-binding ownership) and `keymaps.lua` (Neovim, whole-file ownership). No dep on vsv; shares design conventions (`_tag` discriminator, Effect Schema, branded primitives, "zero `string` types in public API").
+- **`key-binder-glimpse`** — a VS Code extension authored on vsv. Its `vsv.manifest.ts` is the single source of truth for the extension's commands, context keys, and config; vsv generates the `package.json` contributions and TS registries from it.
