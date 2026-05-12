@@ -24,6 +24,15 @@ import type * as vscode from 'vscode'
 // Filesystem
 // ─────────────────────────────────────────────────────────────────────────────
 
+export type FsOperation =
+  | 'readDirectory'
+  | 'stat'
+  | 'realpath'
+  | 'readFile'
+  | 'writeFile'
+  | 'createDirectory'
+  | 'rename'
+
 /**
  * A filesystem operation targeted a path that does not exist. Distinguished
  * from `FsError` because existence checks are the most common branch pattern
@@ -37,7 +46,7 @@ import type * as vscode from 'vscode'
  */
 export class FileNotFoundError extends Data.TaggedError('FileNotFoundError')<{
   readonly uri: vscode.Uri
-  readonly operation: 'readDirectory' | 'stat' | 'realpath' | 'readFile' | 'writeFile' | 'createDirectory'
+  readonly operation: FsOperation
   readonly cause: unknown
 }> {}
 
@@ -65,7 +74,7 @@ export class UnsupportedSchemeError extends Data.TaggedError('UnsupportedSchemeE
  */
 export class FsError extends Data.TaggedError('FsError')<{
   readonly uri: vscode.Uri
-  readonly operation: 'readDirectory' | 'stat' | 'realpath' | 'readFile' | 'writeFile' | 'createDirectory'
+  readonly operation: FsOperation
   readonly cause: unknown
 }> {}
 
@@ -99,6 +108,16 @@ export class CommandExecutionError extends Data.TaggedError('CommandExecutionErr
  */
 export class DocumentOpenError extends Data.TaggedError('DocumentOpenError')<{
   readonly target: vscode.Uri | string
+  readonly cause: unknown
+}> {}
+
+/**
+ * `rt.workspace.saveTextDocument` failed at the VSCode boundary. The common
+ * causes are readonly/virtual documents, provider failures, or the document
+ * becoming invalid between acquisition and save.
+ */
+export class DocumentSaveError extends Data.TaggedError('DocumentSaveError')<{
+  readonly uri: vscode.Uri
   readonly cause: unknown
 }> {}
 
@@ -172,6 +191,7 @@ export type RuntimeError =
   | FsError
   | CommandExecutionError
   | DocumentOpenError
+  | DocumentSaveError
   | WorkspaceEditError
   | ConfigUpdateError
   | StateUpdateError

@@ -4,6 +4,7 @@ export {
   CommandExecutionError,
   ConfigUpdateError,
   DocumentOpenError,
+  DocumentSaveError,
   FileNotFoundError,
   FsError,
   StateUpdateError,
@@ -20,10 +21,13 @@ export {
   WorkspaceEdit,
 } from '#lib/runtime/values'
 export type {
+  Disposable,
+  ExtensionContext,
   FileStat,
   Tab,
   TabGroup,
   TextDocument,
+  TextDocumentChangeEvent,
   TextEditor,
   WorkspaceFolder,
 } from '#lib/runtime/values'

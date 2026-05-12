@@ -5,8 +5,10 @@ import {
   ClipboardError,
   CommandExecutionError,
   ConfigUpdateError,
+  DocumentSaveError,
   DocumentOpenError,
   FileNotFoundError,
+  type FsOperation,
   FsError,
   StateUpdateError,
   UnsupportedSchemeError,
@@ -90,9 +92,9 @@ export interface ContextKeyHandle<V> {
   /** Update the context key. Yields after VSCode's `setContext` propagates. */
   set: (value: V) => Effect.Effect<void>
   /** Read the most recent value set through this handle (cached locally). */
-  get: () => V
+  get: () => Effect.Effect<V>
   /** Subscribe to changes set through this handle. Returns a disposable. */
-  onChange: (cb: (value: V) => void) => vscode.Disposable
+  onChange: (cb: (value: V) => void) => Effect.Effect<vscode.Disposable>
 }
 
 /**
@@ -129,9 +131,9 @@ export interface ConfigInspection<V> {
  */
 export interface ConfigHandle<V> {
   /** Read the current value. Returns `undefined` if not set anywhere. */
-  get: () => V | undefined
+  get: () => Effect.Effect<V | undefined>
   /** Read the current value, falling back to `defaultValue` if unset. */
-  getWithDefault: (defaultValue: V) => V
+  getWithDefault: (defaultValue: V) => Effect.Effect<V>
   /**
    * Update the value at the given target. Defaults to `Workspace`. Passing
    * `undefined` clears the value at that target — matches VSCode's actual
@@ -149,9 +151,9 @@ export interface ConfigHandle<V> {
    * mutate, then `update(original, Global)` in `finally` to restore — passing
    * the original `undefined` clears the slot.
    */
-  inspect: () => ConfigInspection<V> | undefined
+  inspect: () => Effect.Effect<ConfigInspection<V> | undefined>
   /** Subscribe to changes for this specific key. Returns a disposable. */
-  onChange: (cb: (value: V | undefined) => void) => vscode.Disposable
+  onChange: (cb: (value: V | undefined) => void) => Effect.Effect<vscode.Disposable>
 }
 
 /**
@@ -168,9 +170,9 @@ export interface ConfigHandle<V> {
  */
 export interface StateHandle<V> {
   /** Read the current value. Returns `undefined` if never set. */
-  get: () => V | undefined
+  get: () => Effect.Effect<V | undefined>
   /** Read the current value, falling back to `defaultValue` if unset. */
-  getWithDefault: (defaultValue: V) => V
+  getWithDefault: (defaultValue: V) => Effect.Effect<V>
   /** Persist a new value. Yields after the memento write completes. */
   set: (value: V) => Effect.Effect<void, StateUpdateError>
   /** Remove the value from the memento. */
@@ -181,18 +183,19 @@ export interface StateHandle<V> {
  * Handle to a custom event. Returned by `runtime.defineEvent(key)`.
  *
  * Wraps a `vscode.EventEmitter`. Use for cross-module pub/sub within the
- * extension; for VS Code's own events (file system, editor, etc.), use the
- * `vscode.workspace.onDid*` APIs directly.
+ * extension; for VS Code's own events exposed by this runtime, prefer the
+ * matching `rt.workspace.*`, `rt.editor.*`, or `rt.tabs.*` Effect surface.
  *
- * All three operations are sync — no Promise/Effect wrapping needed.
+ * All three operations are Effect-wrapped so consumers can keep runtime
+ * interaction inside one composition model.
  */
 export interface EventHandle<V> {
-  /** Emit a value to all subscribers. Synchronous. */
-  fire: (value: V) => void
+  /** Emit a value to all subscribers. */
+  fire: (value: V) => Effect.Effect<void>
   /** Subscribe. Returns a disposable that unsubscribes on dispose. */
-  event: (listener: (value: V) => void) => vscode.Disposable
+  event: (listener: (value: V) => void) => Effect.Effect<vscode.Disposable>
   /** Dispose the underlying emitter. Subscribers stop receiving events. */
-  dispose: () => void
+  dispose: () => Effect.Effect<void>
 }
 
 /**
@@ -213,8 +216,8 @@ export interface QuickPickItem<T> {
 /**
  * Options for `runtime.notify.prompt`. Maps to a subset of VSCode's
  * `InputBoxOptions` — the subset that's actually useful for keyboard-driven
- * extension prompts (no validation callback yet; call `vscode.window.showInputBox`
- * directly if you need that until vsv exposes it).
+ * extension prompts. Validation callbacks should become vsv runtime surface
+ * when a consumer needs them.
  */
 export interface PromptOptions {
   /** Prompt text shown above the input field. */
@@ -298,11 +301,21 @@ export interface WorkspaceHandle {
    * empty array follows VSCode's own convention: empty workspace ≠ no
    * workspace.
    */
-  readonly folders: readonly vscode.WorkspaceFolder[] | undefined
+  folders: () => Effect.Effect<readonly vscode.WorkspaceFolder[] | undefined>
   /**
    * Subscribe to workspace folder add/remove events. Returns a disposable.
    */
-  onDidChangeFolders: (cb: (e: vscode.WorkspaceFoldersChangeEvent) => void) => vscode.Disposable
+  onDidChangeFolders: (
+    cb: (e: vscode.WorkspaceFoldersChangeEvent) => void,
+  ) => Effect.Effect<vscode.Disposable>
+  /**
+   * Subscribe to text-document change events. The callback runs synchronously
+   * in VS Code's event dispatch path; start any async work explicitly from
+   * the callback.
+   */
+  onDidChangeTextDocument: (
+    cb: (e: vscode.TextDocumentChangeEvent) => void,
+  ) => Effect.Effect<vscode.Disposable>
   /**
    * Open a text document by URI or filesystem path. Yields the
    * `TextDocument` (cached if already open). Use this to load file
@@ -312,6 +325,11 @@ export interface WorkspaceHandle {
   openTextDocument: (
     target: vscode.Uri | string,
   ) => Effect.Effect<vscode.TextDocument, DocumentOpenError>
+  /**
+   * Save a text document. Yields `true` if the document was saved, `false`
+   * if VS Code declined the save without throwing.
+   */
+  saveTextDocument: (document: vscode.TextDocument) => Effect.Effect<boolean, DocumentSaveError>
   /**
    * Apply a `WorkspaceEdit` to the workspace. Yields `true` if the edit
    * applied cleanly. Construct edits with `new WorkspaceEdit()` (re-exported
@@ -329,9 +347,8 @@ export interface WorkspaceHandle {
    * returns `true` if the request was accepted, `false` otherwise (e.g.
    * trying to delete more folders than exist, or invalid args).
    *
-   * **Stays sync.** VSCode's underlying API is synchronous and never throws;
-   * wrapping in `Effect.sync` would lie about the cost model. Callers in
-   * `Effect.gen` blocks call this directly without `yield*`.
+   * Effect-wrapped even though VS Code's underlying API is synchronous, so
+   * callers can use it uniformly from `Effect.gen`.
    *
    * Single-folder workspaces auto-promote to multi-root the first time this
    * is used to add a folder, which closes and reopens the workspace once.
@@ -341,7 +358,7 @@ export interface WorkspaceHandle {
     start: number,
     deleteCount: number | null | undefined,
     ...workspaceFoldersToAdd: ReadonlyArray<{ readonly uri: vscode.Uri; readonly name?: string }>
-  ) => boolean
+  ) => Effect.Effect<boolean>
 }
 
 /**
@@ -384,7 +401,10 @@ export interface FsHandle {
    * `FsError` covers permission denied, IO errors, read-only filesystems,
    * etc. Wraps `vscode.workspace.fs.writeFile`.
    */
-  writeFile: (uri: vscode.Uri, content: Uint8Array) => Effect.Effect<void, FileNotFoundError | FsError>
+  writeFile: (
+    uri: vscode.Uri,
+    content: Uint8Array,
+  ) => Effect.Effect<void, FileNotFoundError | FsError>
   /**
    * Create a directory and any missing parents. Idempotent — succeeds
    * silently if the directory already exists.
@@ -393,6 +413,15 @@ export interface FsHandle {
    * Wraps `vscode.workspace.fs.createDirectory` (which is recursive).
    */
   createDirectory: (uri: vscode.Uri) => Effect.Effect<void, FileNotFoundError | FsError>
+  /**
+   * Rename or move a file/directory. Pass `overwrite: true` for atomic
+   * temp-file replacement patterns.
+   */
+  rename: (
+    source: vscode.Uri,
+    target: vscode.Uri,
+    options?: { readonly overwrite?: boolean },
+  ) => Effect.Effect<void, FileNotFoundError | FsError>
   /**
    * Resolve symlinks in `uri` to the on-disk realpath. Yields a new URI.
    *
@@ -457,7 +486,7 @@ export interface ShowOpenDialogOptions {
  */
 export interface EditorHandle {
   /** Currently focused text editor, or `undefined`. */
-  readonly active: vscode.TextEditor | undefined
+  active: () => Effect.Effect<vscode.TextEditor | undefined>
 }
 
 /**
@@ -469,7 +498,7 @@ export interface TabsHandle {
    * diffs, notebooks, terminals, etc. — plus the `activeTab` and
    * `viewColumn`.
    */
-  readonly groups: readonly vscode.TabGroup[]
+  groups: () => Effect.Effect<readonly vscode.TabGroup[]>
   /**
    * Close one or more tabs. Accepts a single tab or array. Yields `true` if
    * all targeted tabs were closed.
@@ -489,9 +518,9 @@ export interface StatusBarHandle {
    * — anything more than ~3 seconds belongs in a notification, not the
    * status bar.
    *
-   * Stays sync — VSCode's underlying call is sync and can't fail.
+   * Effect-wrapped for consistency with the rest of the runtime surface.
    */
-  message: (text: string, timeoutMs?: number) => void
+  message: (text: string, timeoutMs?: number) => Effect.Effect<void>
 }
 
 /**
@@ -517,18 +546,11 @@ type ExternalCommandArgs<T> = [T] extends [void] ? [] : T extends readonly unkno
  * to a generated `*Registry` type. Methods are indexed by the registries so
  * id/key mismatches and value-type mistakes surface at compile time.
  *
- * **Effect-native.** Every async operation returns
- * `Effect.Effect<A, E>`. Consumer extensions write handlers as
- * `Effect.gen` blocks rather than `async`/`await`. The runtime bridges to
- * VSCode's Promise-based API at the boundary via `Effect.tryPromise`.
- *
- * Sync getters and pure operations stay sync — the migration only touches
- * Promise-returning surfaces. Specifically: `editor.active`,
- * `workspace.folders`, `tabs.groups`, `ConfigHandle.get/getWithDefault/inspect/onChange`,
- * `StateHandle.get/getWithDefault`, `ContextKeyHandle.get/onChange`,
- * `EventHandle.{fire,event,dispose}`, `statusBar.message`,
- * `workspace.updateFolders`, `disposables`, and `defineCommand`'s return
- * (a `vscode.Disposable`) all stay sync.
+ * **Effect-native.** Runtime operations that touch VS Code or host state
+ * return `Effect.Effect<A, E>`. Consumer extensions write handlers as
+ * `Effect.gen` blocks rather than mixing direct VS Code calls, timers, and
+ * `async`/`await`. The runtime bridges to VS Code's sync and Promise APIs at
+ * the boundary with `Effect.sync`, `Effect.promise`, and `Effect.tryPromise`.
  *
  * Most extensions only thread the first one or two generics; defaults
  * (`*RegistryShape`) widen to permissive untyped maps when omitted. Pass
@@ -549,23 +571,22 @@ export interface Runtime<
    * Register a command handler. The handler is Effect-typed — it returns
    * `Effect.Effect<R, E>`, where `R` matches the command's declared
    * result type and the error channel is open. The runtime bridges to
-   * VSCode's Promise-based `commands.registerCommand` via `Effect.runPromise`
-   * at invocation time, so handler errors land as rejected Promises that
-   * VSCode propagates to its command-execution failure path.
+   * VSCode's Promise-based `commands.registerCommand` at invocation time, so
+   * handler errors land as rejected Promises that VSCode propagates to its
+   * command-execution failure path.
    *
-   * Returns a `Disposable` — push to `context.subscriptions` so VS Code
+   * Yields a `Disposable` — push to `context.subscriptions` so VS Code
    * unregisters the command on extension deactivation.
    */
   defineCommand: <Id extends keyof CR & string>(
     id: Id,
     handler: (args: CR[Id]['args']) => Effect.Effect<CR[Id]['result'], unknown>,
-  ) => vscode.Disposable
+  ) => Effect.Effect<vscode.Disposable>
 
   /**
    * Invoke a command from this extension's `CommandRegistry`. The arg shape
    * and return type are constrained by the registry entry. For commands
-   * outside the registry, use `executeCommandRaw` or call
-   * `vscode.commands.executeCommand` directly.
+   * outside the registry, use `executeCommandRaw`.
    */
   executeCommand: <Id extends keyof CR & string>(
     id: Id,
@@ -619,19 +640,21 @@ export interface Runtime<
 
   /**
    * Define a context key. Sets the initial value via VSCode's `setContext`
-   * (fire-and-forget — VSCode updates internal state synchronously before
-   * the IPC roundtrip completes) and returns a handle for subsequent updates.
+   * and yields a handle for subsequent updates.
    */
   defineContextKey: <K extends keyof CKR & string>(
     key: K,
     initialValue: CKR[K],
-  ) => ContextKeyHandle<CKR[K]>
+  ) => Effect.Effect<ContextKeyHandle<CKR[K]>>
 
   /**
    * Define a configuration accessor. The optional `section` scopes reads
    * and writes (e.g. `'editor'` for `editor.foo`); omit for root keys.
    */
-  defineConfig: <K extends keyof CFR & string>(key: K, section?: string) => ConfigHandle<CFR[K]>
+  defineConfig: <K extends keyof CFR & string>(
+    key: K,
+    section?: string,
+  ) => Effect.Effect<ConfigHandle<CFR[K]>>
 
   /**
    * Define a typed accessor for a configuration setting **owned by VSCode
@@ -644,10 +667,12 @@ export interface Runtime<
    * would corrupt VSCode's settings UI. Foreign settings are declared via
    * `ForeignConfigDecl` and skipped by the package.json sync.
    */
-  defineForeignConfig: <K extends keyof FCR & string>(fullKey: K) => ConfigHandle<FCR[K]>
+  defineForeignConfig: <K extends keyof FCR & string>(
+    fullKey: K,
+  ) => Effect.Effect<ConfigHandle<FCR[K]>>
 
   /** Define a custom event emitter. */
-  defineEvent: <K extends keyof ER & string>(key: K) => EventHandle<ER[K]>
+  defineEvent: <K extends keyof ER & string>(key: K) => Effect.Effect<EventHandle<ER[K]>>
 
   /**
    * Define a typed accessor over `globalState` or `workspaceState`. The
@@ -659,7 +684,7 @@ export interface Runtime<
     context: vscode.ExtensionContext,
     key: K,
     scope: SR[K]['scope'],
-  ) => StateHandle<SR[K]['value']>
+  ) => Effect.Effect<StateHandle<SR[K]['value']>>
 
   /**
    * Show a `QuickPick` over typed items. Yields the picked item's `value`
@@ -722,7 +747,7 @@ export interface Runtime<
    * `vscode.Disposable.from(...)` but accepts the more permissive
    * `{ dispose }` shape.
    */
-  disposables: (...ds: Array<{ dispose: () => void }>) => vscode.Disposable
+  disposables: (...ds: Array<{ dispose: () => void }>) => Effect.Effect<vscode.Disposable>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -740,16 +765,7 @@ export interface Runtime<
  * etc.) since `realpath` drops to Node's fs module.
  */
 const toFsError =
-  (
-    uri: vscode.Uri,
-    operation:
-      | 'readDirectory'
-      | 'stat'
-      | 'realpath'
-      | 'readFile'
-      | 'writeFile'
-      | 'createDirectory',
-  ) =>
+  (uri: vscode.Uri, operation: FsOperation) =>
   (cause: unknown): FileNotFoundError | FsError => {
     // Narrowing `unknown` to `{ code?: unknown }` so we can read the diagnostic
     // code without throwing on null / non-object causes. Lint can't see that
@@ -803,25 +819,26 @@ export const createRuntime = <
   defineCommand: <Id extends keyof CR & string>(
     id: Id,
     handler: (args: CR[Id]['args']) => Effect.Effect<CR[Id]['result'], unknown>,
-  ): vscode.Disposable => {
-    // Bridge: vscode.commands.registerCommand expects a thunk that returns a
-    // value or Promise. We run the consumer's Effect with `Effect.runPromiseExit`
-    // (not `runPromise`) so we can project the Exit's cause into a plain
-    // throwable that preserves the original tagged-error identity. Plain
-    // `runPromise` rejects with `FiberFailure` wrapping the cause, which loses
-    // tag identity for downstream `executeCommand` callers matching on
-    // `CommandExecutionError.cause._tag`.
-    const thunk = async (args: CR[Id]['args']): Promise<CR[Id]['result']> => {
-      const exit = await Effect.runPromiseExit(handler(args))
-      if (Exit.isSuccess(exit)) return exit.value
-      const failure = Cause.failureOption(exit.cause)
-      // `Some` → original Fail<E> error; preserves Data.TaggedError instance
-      // identity. `None` → defect or interrupt, fall back to `Cause.squash`
-      // which materializes the cause as a throwable.
-      throw failure._tag === 'Some' ? failure.value : Cause.squash(exit.cause)
-    }
-    return vscode.commands.registerCommand(id, thunk as (...args: unknown[]) => unknown)
-  },
+  ): Effect.Effect<vscode.Disposable> =>
+    Effect.sync(() => {
+      // Bridge: vscode.commands.registerCommand expects a thunk that returns a
+      // value or Promise. We run the consumer's Effect with
+      // `Effect.runPromiseExit` (not `runPromise`) so we can project the Exit's
+      // cause into a plain throwable that preserves the original tagged-error
+      // identity. Plain `runPromise` rejects with `FiberFailure` wrapping the
+      // cause, which loses tag identity for downstream `executeCommand` callers
+      // matching on `CommandExecutionError.cause._tag`.
+      const thunk = async (args: CR[Id]['args']): Promise<CR[Id]['result']> => {
+        const exit = await Effect.runPromiseExit(handler(args))
+        if (Exit.isSuccess(exit)) return exit.value
+        const failure = Cause.failureOption(exit.cause)
+        // `Some` -> original Fail<E> error; preserves Data.TaggedError instance
+        // identity. `None` -> defect or interrupt, fall back to `Cause.squash`
+        // which materializes the cause as a throwable.
+        throw failure._tag === 'Some' ? failure.value : Cause.squash(exit.cause)
+      }
+      return vscode.commands.registerCommand(id, thunk as (...args: unknown[]) => unknown)
+    }),
 
   executeCommand: <Id extends keyof CR & string>(
     id: Id,
@@ -860,152 +877,165 @@ export const createRuntime = <
       catch: (cause) => new CommandExecutionError({ id, cause }),
     }),
 
-  defineContextKey: <K extends keyof CKR & string>(key: K, initialValue: CKR[K]) => {
-    let current = initialValue
-    const listeners = new Set<(v: CKR[K]) => void>()
-    // Fire-and-forget the initial setContext. VSCode updates context state
-    // synchronously inside the executeCommand body before the IPC roundtrip
-    // resolves, so subsequent reads of the key see `initialValue` even though
-    // we don't `yield*` here.
-    void vscode.commands.executeCommand('setContext', key, current)
-    return {
-      set: (value: CKR[K]): Effect.Effect<void> =>
-        Effect.promise(async () => {
-          current = value
-          await vscode.commands.executeCommand('setContext', key, value)
-          // Each listener runs in isolation: a throwing listener should not
-          // prevent siblings from receiving the event, and must not promote
-          // the never-typed Effect failure channel into a defect. Errors are
-          // logged and swallowed — listeners are observation hooks, not
-          // commits, so failure here is non-fatal.
-          for (const l of listeners) {
-            try {
-              l(value)
-            } catch (err) {
-              console.error(`vsv: context-key '${key}' listener threw`, err)
+  defineContextKey: <K extends keyof CKR & string>(key: K, initialValue: CKR[K]) =>
+    Effect.gen(function* () {
+      let current = initialValue
+      const listeners = new Set<(v: CKR[K]) => void>()
+      yield* Effect.promise(() => vscode.commands.executeCommand('setContext', key, current))
+      return {
+        set: (value: CKR[K]): Effect.Effect<void> =>
+          Effect.promise(async () => {
+            current = value
+            await vscode.commands.executeCommand('setContext', key, value)
+            // Each listener runs in isolation: a throwing listener should not
+            // prevent siblings from receiving the event, and must not promote
+            // the never-typed Effect failure channel into a defect. Errors are
+            // logged and swallowed; listeners are observation hooks, not
+            // commits, so failure here is non-fatal.
+            for (const l of listeners) {
+              try {
+                l(value)
+              } catch (err) {
+                console.error(`vsv: context-key '${key}' listener threw`, err)
+              }
             }
-          }
-        }),
-      get: (): CKR[K] => current,
-      onChange: (cb: (v: CKR[K]) => void): vscode.Disposable => {
-        listeners.add(cb)
-        return {
-          dispose: () => {
-            listeners.delete(cb)
-          },
-        }
-      },
-    }
-  },
+          }),
+        get: (): Effect.Effect<CKR[K]> => Effect.sync(() => current),
+        onChange: (cb: (v: CKR[K]) => void): Effect.Effect<vscode.Disposable> =>
+          Effect.sync(() => {
+            listeners.add(cb)
+            return {
+              dispose: () => {
+                listeners.delete(cb)
+              },
+            }
+          }),
+      }
+    }),
 
-  defineConfig: <K extends keyof CFR & string>(key: K, section?: string) => {
-    const getCfg = (): vscode.WorkspaceConfiguration => vscode.workspace.getConfiguration(section)
-    const fullKey = section === undefined ? key : `${section}.${key}`
-    return {
-      get: (): CFR[K] | undefined => getCfg().get<CFR[K]>(key),
-      getWithDefault: (defaultValue: CFR[K]): CFR[K] => getCfg().get<CFR[K]>(key, defaultValue),
-      update: (
-        value: CFR[K] | undefined,
-        target: vscode.ConfigurationTarget = vscode.ConfigurationTarget.Workspace,
-      ): Effect.Effect<void, ConfigUpdateError> =>
-        Effect.tryPromise({
-          try: () => Promise.resolve(getCfg().update(key, value, target)),
-          catch: (cause) => new ConfigUpdateError({ key: fullKey, target, cause }),
-        }),
-      inspect: (): ConfigInspection<CFR[K]> | undefined => {
-        const ins = getCfg().inspect<CFR[K]>(key)
-        if (ins === undefined) return undefined
-        const out: ConfigInspection<CFR[K]> = { key: ins.key }
-        if (ins.defaultValue !== undefined) out.defaultValue = ins.defaultValue
-        if (ins.globalValue !== undefined) out.globalValue = ins.globalValue
-        if (ins.workspaceValue !== undefined) out.workspaceValue = ins.workspaceValue
-        if (ins.workspaceFolderValue !== undefined)
-          out.workspaceFolderValue = ins.workspaceFolderValue
-        return out
-      },
-      onChange: (cb: (value: CFR[K] | undefined) => void): vscode.Disposable => {
-        return vscode.workspace.onDidChangeConfiguration((e) => {
-          if (e.affectsConfiguration(fullKey)) {
-            cb(getCfg().get<CFR[K]>(key))
-          }
-        })
-      },
-    }
-  },
+  defineConfig: <K extends keyof CFR & string>(key: K, section?: string) =>
+    Effect.sync(() => {
+      const getCfg = (): vscode.WorkspaceConfiguration => vscode.workspace.getConfiguration(section)
+      const fullKey = section === undefined ? key : `${section}.${key}`
+      return {
+        get: (): Effect.Effect<CFR[K] | undefined> => Effect.sync(() => getCfg().get<CFR[K]>(key)),
+        getWithDefault: (defaultValue: CFR[K]): Effect.Effect<CFR[K]> =>
+          Effect.sync(() => getCfg().get<CFR[K]>(key, defaultValue)),
+        update: (
+          value: CFR[K] | undefined,
+          target: vscode.ConfigurationTarget = vscode.ConfigurationTarget.Workspace,
+        ): Effect.Effect<void, ConfigUpdateError> =>
+          Effect.tryPromise({
+            try: () => Promise.resolve(getCfg().update(key, value, target)),
+            catch: (cause) => new ConfigUpdateError({ key: fullKey, target, cause }),
+          }),
+        inspect: (): Effect.Effect<ConfigInspection<CFR[K]> | undefined> =>
+          Effect.sync(() => {
+            const ins = getCfg().inspect<CFR[K]>(key)
+            if (ins === undefined) return undefined
+            const out: ConfigInspection<CFR[K]> = { key: ins.key }
+            if (ins.defaultValue !== undefined) out.defaultValue = ins.defaultValue
+            if (ins.globalValue !== undefined) out.globalValue = ins.globalValue
+            if (ins.workspaceValue !== undefined) out.workspaceValue = ins.workspaceValue
+            if (ins.workspaceFolderValue !== undefined)
+              out.workspaceFolderValue = ins.workspaceFolderValue
+            return out
+          }),
+        onChange: (cb: (value: CFR[K] | undefined) => void): Effect.Effect<vscode.Disposable> =>
+          Effect.sync(() =>
+            vscode.workspace.onDidChangeConfiguration((e) => {
+              if (e.affectsConfiguration(fullKey)) {
+                cb(getCfg().get<CFR[K]>(key))
+              }
+            }),
+          ),
+      }
+    }),
 
   // Foreign configs are accessed at the root config level using the full
   // dotted key. This avoids ambiguity for nested settings like
   // `typescript.preferences.useAliasesForRenames` where the section/key split
   // is not unique.
-  defineForeignConfig: <K extends keyof FCR & string>(fullKey: K) => {
-    const getCfg = (): vscode.WorkspaceConfiguration => vscode.workspace.getConfiguration()
-    return {
-      get: (): FCR[K] | undefined => getCfg().get<FCR[K]>(fullKey),
-      getWithDefault: (defaultValue: FCR[K]): FCR[K] => getCfg().get<FCR[K]>(fullKey, defaultValue),
-      update: (
-        value: FCR[K] | undefined,
-        target: vscode.ConfigurationTarget = vscode.ConfigurationTarget.Workspace,
-      ): Effect.Effect<void, ConfigUpdateError> =>
-        Effect.tryPromise({
-          try: () => Promise.resolve(getCfg().update(fullKey, value, target)),
-          catch: (cause) => new ConfigUpdateError({ key: fullKey, target, cause }),
-        }),
-      inspect: (): ConfigInspection<FCR[K]> | undefined => {
-        const ins = getCfg().inspect<FCR[K]>(fullKey)
-        if (ins === undefined) return undefined
-        const out: ConfigInspection<FCR[K]> = { key: ins.key }
-        if (ins.defaultValue !== undefined) out.defaultValue = ins.defaultValue
-        if (ins.globalValue !== undefined) out.globalValue = ins.globalValue
-        if (ins.workspaceValue !== undefined) out.workspaceValue = ins.workspaceValue
-        if (ins.workspaceFolderValue !== undefined)
-          out.workspaceFolderValue = ins.workspaceFolderValue
-        return out
-      },
-      onChange: (cb: (value: FCR[K] | undefined) => void): vscode.Disposable => {
-        return vscode.workspace.onDidChangeConfiguration((e) => {
-          if (e.affectsConfiguration(fullKey)) {
-            cb(getCfg().get<FCR[K]>(fullKey))
-          }
-        })
-      },
-    }
-  },
+  defineForeignConfig: <K extends keyof FCR & string>(fullKey: K) =>
+    Effect.sync(() => {
+      const getCfg = (): vscode.WorkspaceConfiguration => vscode.workspace.getConfiguration()
+      return {
+        get: (): Effect.Effect<FCR[K] | undefined> =>
+          Effect.sync(() => getCfg().get<FCR[K]>(fullKey)),
+        getWithDefault: (defaultValue: FCR[K]): Effect.Effect<FCR[K]> =>
+          Effect.sync(() => getCfg().get<FCR[K]>(fullKey, defaultValue)),
+        update: (
+          value: FCR[K] | undefined,
+          target: vscode.ConfigurationTarget = vscode.ConfigurationTarget.Workspace,
+        ): Effect.Effect<void, ConfigUpdateError> =>
+          Effect.tryPromise({
+            try: () => Promise.resolve(getCfg().update(fullKey, value, target)),
+            catch: (cause) => new ConfigUpdateError({ key: fullKey, target, cause }),
+          }),
+        inspect: (): Effect.Effect<ConfigInspection<FCR[K]> | undefined> =>
+          Effect.sync(() => {
+            const ins = getCfg().inspect<FCR[K]>(fullKey)
+            if (ins === undefined) return undefined
+            const out: ConfigInspection<FCR[K]> = { key: ins.key }
+            if (ins.defaultValue !== undefined) out.defaultValue = ins.defaultValue
+            if (ins.globalValue !== undefined) out.globalValue = ins.globalValue
+            if (ins.workspaceValue !== undefined) out.workspaceValue = ins.workspaceValue
+            if (ins.workspaceFolderValue !== undefined)
+              out.workspaceFolderValue = ins.workspaceFolderValue
+            return out
+          }),
+        onChange: (cb: (value: FCR[K] | undefined) => void): Effect.Effect<vscode.Disposable> =>
+          Effect.sync(() =>
+            vscode.workspace.onDidChangeConfiguration((e) => {
+              if (e.affectsConfiguration(fullKey)) {
+                cb(getCfg().get<FCR[K]>(fullKey))
+              }
+            }),
+          ),
+      }
+    }),
 
-  defineEvent: <K extends keyof ER & string>(_key: K) => {
-    const emitter = new vscode.EventEmitter<ER[K]>()
-    return {
-      fire: (value: ER[K]): void => {
-        emitter.fire(value)
-      },
-      event: (listener: (value: ER[K]) => void): vscode.Disposable => emitter.event(listener),
-      dispose: (): void => {
-        emitter.dispose()
-      },
-    }
-  },
+  defineEvent: <K extends keyof ER & string>(_key: K) =>
+    Effect.sync(() => {
+      const emitter = new vscode.EventEmitter<ER[K]>()
+      return {
+        fire: (value: ER[K]): Effect.Effect<void> =>
+          Effect.sync(() => {
+            emitter.fire(value)
+          }),
+        event: (listener: (value: ER[K]) => void): Effect.Effect<vscode.Disposable> =>
+          Effect.sync(() => emitter.event(listener)),
+        dispose: (): Effect.Effect<void> =>
+          Effect.sync(() => {
+            emitter.dispose()
+          }),
+      }
+    }),
 
   defineState: <K extends keyof SR & string>(
     context: vscode.ExtensionContext,
     key: K,
     scope: SR[K]['scope'],
-  ) => {
-    const memento = scope === 'global' ? context.globalState : context.workspaceState
-    return {
-      get: (): SR[K]['value'] | undefined => memento.get<SR[K]['value']>(key),
-      getWithDefault: (defaultValue: SR[K]['value']): SR[K]['value'] =>
-        memento.get<SR[K]['value']>(key, defaultValue),
-      set: (value: SR[K]['value']): Effect.Effect<void, StateUpdateError> =>
-        Effect.tryPromise({
-          try: () => Promise.resolve(memento.update(key, value)),
-          catch: (cause) => new StateUpdateError({ key, operation: 'set', cause }),
-        }),
-      delete: (): Effect.Effect<void, StateUpdateError> =>
-        Effect.tryPromise({
-          try: () => Promise.resolve(memento.update(key, undefined)),
-          catch: (cause) => new StateUpdateError({ key, operation: 'delete', cause }),
-        }),
-    }
-  },
+  ) =>
+    Effect.sync(() => {
+      const memento = scope === 'global' ? context.globalState : context.workspaceState
+      return {
+        get: (): Effect.Effect<SR[K]['value'] | undefined> =>
+          Effect.sync(() => memento.get<SR[K]['value']>(key)),
+        getWithDefault: (defaultValue: SR[K]['value']): Effect.Effect<SR[K]['value']> =>
+          Effect.sync(() => memento.get<SR[K]['value']>(key, defaultValue)),
+        set: (value: SR[K]['value']): Effect.Effect<void, StateUpdateError> =>
+          Effect.tryPromise({
+            try: () => Promise.resolve(memento.update(key, value)),
+            catch: (cause) => new StateUpdateError({ key, operation: 'set', cause }),
+          }),
+        delete: (): Effect.Effect<void, StateUpdateError> =>
+          Effect.tryPromise({
+            try: () => Promise.resolve(memento.update(key, undefined)),
+            catch: (cause) => new StateUpdateError({ key, operation: 'delete', cause }),
+          }),
+      }
+    }),
 
   quickPick: <T>(
     items: ReadonlyArray<QuickPickItem<T>>,
@@ -1027,27 +1057,12 @@ export const createRuntime = <
     }),
 
   notify: {
-    info: (
-      text: string,
-      ...actions: ReadonlyArray<string>
-    ): Effect.Effect<string | undefined> =>
-      Effect.promise(() =>
-        Promise.resolve(vscode.window.showInformationMessage(text, ...actions)),
-      ),
-    warn: (
-      text: string,
-      ...actions: ReadonlyArray<string>
-    ): Effect.Effect<string | undefined> =>
-      Effect.promise(() =>
-        Promise.resolve(vscode.window.showWarningMessage(text, ...actions)),
-      ),
-    error: (
-      text: string,
-      ...actions: ReadonlyArray<string>
-    ): Effect.Effect<string | undefined> =>
-      Effect.promise(() =>
-        Promise.resolve(vscode.window.showErrorMessage(text, ...actions)),
-      ),
+    info: (text: string, ...actions: ReadonlyArray<string>): Effect.Effect<string | undefined> =>
+      Effect.promise(() => Promise.resolve(vscode.window.showInformationMessage(text, ...actions))),
+    warn: (text: string, ...actions: ReadonlyArray<string>): Effect.Effect<string | undefined> =>
+      Effect.promise(() => Promise.resolve(vscode.window.showWarningMessage(text, ...actions))),
+    error: (text: string, ...actions: ReadonlyArray<string>): Effect.Effect<string | undefined> =>
+      Effect.promise(() => Promise.resolve(vscode.window.showErrorMessage(text, ...actions))),
     prompt: (options: PromptOptions): Effect.Effect<string | undefined> =>
       Effect.promise(() => {
         // Build the vscode-shaped options object incrementally — passing
@@ -1063,9 +1078,10 @@ export const createRuntime = <
   },
 
   statusBar: {
-    message: (text: string, timeoutMs: number = 1500): void => {
-      vscode.window.setStatusBarMessage(text, timeoutMs)
-    },
+    message: (text: string, timeoutMs: number = 1500): Effect.Effect<void> =>
+      Effect.sync(() => {
+        vscode.window.setStatusBarMessage(text, timeoutMs)
+      }),
   },
 
   clipboard: {
@@ -1082,11 +1098,16 @@ export const createRuntime = <
   },
 
   workspace: {
-    get folders(): readonly vscode.WorkspaceFolder[] | undefined {
-      return vscode.workspace.workspaceFolders
-    },
-    onDidChangeFolders: (cb: (e: vscode.WorkspaceFoldersChangeEvent) => void): vscode.Disposable =>
-      vscode.workspace.onDidChangeWorkspaceFolders(cb),
+    folders: (): Effect.Effect<readonly vscode.WorkspaceFolder[] | undefined> =>
+      Effect.sync(() => vscode.workspace.workspaceFolders),
+    onDidChangeFolders: (
+      cb: (e: vscode.WorkspaceFoldersChangeEvent) => void,
+    ): Effect.Effect<vscode.Disposable> =>
+      Effect.sync(() => vscode.workspace.onDidChangeWorkspaceFolders(cb)),
+    onDidChangeTextDocument: (
+      cb: (e: vscode.TextDocumentChangeEvent) => void,
+    ): Effect.Effect<vscode.Disposable> =>
+      Effect.sync(() => vscode.workspace.onDidChangeTextDocument(cb)),
     openTextDocument: (
       target: vscode.Uri | string,
     ): Effect.Effect<vscode.TextDocument, DocumentOpenError> =>
@@ -1100,6 +1121,11 @@ export const createRuntime = <
             : vscode.workspace.openTextDocument(target),
         catch: (cause) => new DocumentOpenError({ target, cause }),
       }),
+    saveTextDocument: (document: vscode.TextDocument): Effect.Effect<boolean, DocumentSaveError> =>
+      Effect.tryPromise({
+        try: () => Promise.resolve(document.save()),
+        catch: (cause) => new DocumentSaveError({ uri: document.uri, cause }),
+      }),
     applyEdit: (edit: vscode.WorkspaceEdit): Effect.Effect<boolean, WorkspaceEditError> =>
       Effect.tryPromise({
         try: () => Promise.resolve(vscode.workspace.applyEdit(edit)),
@@ -1109,7 +1135,8 @@ export const createRuntime = <
       start: number,
       deleteCount: number | null | undefined,
       ...adds: ReadonlyArray<{ readonly uri: vscode.Uri; readonly name?: string }>
-    ): boolean => vscode.workspace.updateWorkspaceFolders(start, deleteCount, ...adds),
+    ): Effect.Effect<boolean> =>
+      Effect.sync(() => vscode.workspace.updateWorkspaceFolders(start, deleteCount, ...adds)),
   },
 
   fs: {
@@ -1143,6 +1170,15 @@ export const createRuntime = <
         try: () => Promise.resolve(vscode.workspace.fs.createDirectory(uri)),
         catch: toFsError(uri, 'createDirectory'),
       }),
+    rename: (
+      source: vscode.Uri,
+      target: vscode.Uri,
+      options?: { readonly overwrite?: boolean },
+    ): Effect.Effect<void, FileNotFoundError | FsError> =>
+      Effect.tryPromise({
+        try: () => Promise.resolve(vscode.workspace.fs.rename(source, target, options)),
+        catch: toFsError(source, 'rename'),
+      }),
     realpath: (
       uri: vscode.Uri,
     ): Effect.Effect<vscode.Uri, FileNotFoundError | UnsupportedSchemeError | FsError> => {
@@ -1165,15 +1201,13 @@ export const createRuntime = <
   },
 
   editor: {
-    get active(): vscode.TextEditor | undefined {
-      return vscode.window.activeTextEditor
-    },
+    active: (): Effect.Effect<vscode.TextEditor | undefined> =>
+      Effect.sync(() => vscode.window.activeTextEditor),
   },
 
   tabs: {
-    get groups(): readonly vscode.TabGroup[] {
-      return vscode.window.tabGroups.all
-    },
+    groups: (): Effect.Effect<readonly vscode.TabGroup[]> =>
+      Effect.sync(() => vscode.window.tabGroups.all),
     close: (tabs: vscode.Tab | readonly vscode.Tab[]): Effect.Effect<boolean> =>
       Effect.promise(() => {
         // VSCode's `close` doesn't accept readonly arrays — materialize a
@@ -1213,6 +1247,6 @@ export const createRuntime = <
       }),
   },
 
-  disposables: (...ds: Array<{ dispose: () => void }>): vscode.Disposable =>
-    vscode.Disposable.from(...(ds as vscode.Disposable[])),
+  disposables: (...ds: Array<{ dispose: () => void }>): Effect.Effect<vscode.Disposable> =>
+    Effect.sync(() => vscode.Disposable.from(...(ds as vscode.Disposable[]))),
 })

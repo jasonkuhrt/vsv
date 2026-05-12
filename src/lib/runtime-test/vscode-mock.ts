@@ -199,6 +199,7 @@ interface TextDocument {
   getText(range?: Range): string
   getWordRangeAtPosition(position: Position, regex?: RegExp): Range | undefined
   lineAt(line: number): TextLine
+  save(): Promise<boolean>
 }
 
 interface InternalTextDocument extends TextDocument {
@@ -263,6 +264,7 @@ const createMockTextDocument = (uri: Uri, initial: string): InternalTextDocument
         range: new Range(new Position(lineNumber, 0), new Position(lineNumber, lineText.length)),
       }
     },
+    save: async (): Promise<boolean> => true,
     __setText: (s: string): void => {
       text = s
     },
@@ -354,7 +356,7 @@ interface MockState {
   configurationChanges: ConfigurationChange[]
   shownQuickPicks: unknown[]
   nextQuickPickResult: unknown
-  createdQuickPicks: MockQuickPick<QuickPickItem>[]
+  createdQuickPicks: MockQuickPick[]
   shownInputBoxes: Array<{ options: unknown }>
   nextInputBoxResult: string | undefined
   shownMessages: Array<{
@@ -369,6 +371,7 @@ interface MockState {
   documents: Map<string, InternalTextDocument>
   appliedEdits: WorkspaceEdit[]
   activeTextEditor: TextEditor | undefined
+  textDocumentChangeListeners: Set<(event: TextDocumentChangeEvent) => unknown>
   clipboard: string
   workspaceFolders: WorkspaceFolder[] | undefined
   fsEntries: Map<string, ReadonlyArray<[string, FileType]>>
@@ -378,6 +381,15 @@ interface MockState {
   nextUpdateFoldersResult: boolean
   shownOpenDialogs: Array<{ options: OpenDialogOptionsRecord }>
   nextOpenDialogResult: readonly Uri[] | undefined
+}
+
+interface TextDocumentContentChangeEvent {
+  readonly text: string
+}
+
+interface TextDocumentChangeEvent {
+  readonly document: TextDocument
+  readonly contentChanges: readonly TextDocumentContentChangeEvent[]
 }
 
 export interface WorkspaceFolder {
@@ -405,6 +417,7 @@ const state: MockState = {
   documents: new Map(),
   appliedEdits: [],
   activeTextEditor: undefined,
+  textDocumentChangeListeners: new Set(),
   clipboard: '',
   workspaceFolders: undefined,
   fsEntries: new Map(),
@@ -525,6 +538,14 @@ export const workspace = {
   onDidChangeWorkspaceFolders: (_listener: (e: unknown) => unknown) => {
     return { dispose: () => {} }
   },
+  onDidChangeTextDocument: (listener: (event: TextDocumentChangeEvent) => unknown) => {
+    state.textDocumentChangeListeners.add(listener)
+    return {
+      dispose: () => {
+        state.textDocumentChangeListeners.delete(listener)
+      },
+    }
+  },
   openTextDocument: async (target: Uri | string): Promise<TextDocument> => {
     const uri = typeof target === 'string' ? Uri.file(target) : target
     const key = uri.toString()
@@ -579,6 +600,23 @@ export const workspace = {
       // that care about intermediate paths should seed them via setFsDirectory.
       state.fsStats.set(uri.fsPath, { type: FileType.Directory, ctime: 0, mtime: 0, size: 0 })
       if (!state.fsEntries.has(uri.fsPath)) state.fsEntries.set(uri.fsPath, [])
+    },
+    rename: async (
+      source: Uri,
+      target: Uri,
+      _options?: { readonly overwrite?: boolean },
+    ): Promise<void> => {
+      const content = state.fsContents.get(source.fsPath)
+      const stat = state.fsStats.get(source.fsPath)
+      if (content === undefined && stat === undefined) {
+        const err = new Error(`ENOENT: ${source.fsPath}`)
+        ;(err as { code?: string }).code = 'FileNotFound'
+        throw err
+      }
+      if (content !== undefined) state.fsContents.set(target.fsPath, content)
+      if (stat !== undefined) state.fsStats.set(target.fsPath, stat)
+      state.fsContents.delete(source.fsPath)
+      state.fsStats.delete(source.fsPath)
     },
   },
   applyEdit: async (edit: WorkspaceEdit): Promise<boolean> => {
@@ -702,7 +740,7 @@ export const window = {
   tabGroups: tabGroupsApi,
   createQuickPick: <T extends QuickPickItem = QuickPickItem>(): MockQuickPick<T> => {
     const qp = new MockQuickPick<T>()
-    state.createdQuickPicks.push(qp as unknown as MockQuickPick<QuickPickItem>)
+    state.createdQuickPicks.push(qp as unknown as MockQuickPick)
     return qp
   },
 }
@@ -910,6 +948,7 @@ export const __state = {
     state.documents.clear()
     state.appliedEdits = []
     state.activeTextEditor = undefined
+    state.textDocumentChangeListeners.clear()
     state.clipboard = ''
     state.workspaceFolders = undefined
     state.fsEntries.clear()
@@ -1002,10 +1041,8 @@ export const __state = {
   },
 
   // Quick picks (createQuickPick — stateful API)
-  getCreatedQuickPicks: (): ReadonlyArray<MockQuickPick<QuickPickItem>> => [
-    ...state.createdQuickPicks,
-  ],
-  getLastCreatedQuickPick: (): MockQuickPick<QuickPickItem> | undefined =>
+  getCreatedQuickPicks: (): ReadonlyArray<MockQuickPick> => [...state.createdQuickPicks],
+  getLastCreatedQuickPick: (): MockQuickPick | undefined =>
     state.createdQuickPicks[state.createdQuickPicks.length - 1],
 
   // Input box
@@ -1060,6 +1097,15 @@ export const __state = {
     const pos = cursor instanceof Position ? cursor : new Position(cursor.line, cursor.character)
     state.activeTextEditor = { document: doc, selection: new Selection(pos, pos) }
     return doc
+  },
+  fireTextDocumentChange: (
+    document: TextDocument,
+    contentChanges: readonly TextDocumentContentChangeEvent[],
+  ): void => {
+    const event: TextDocumentChangeEvent = { document, contentChanges }
+    for (const listener of state.textDocumentChangeListeners) {
+      listener(event)
+    }
   },
 
   // Workspace folder splice — recorded calls + seedable result

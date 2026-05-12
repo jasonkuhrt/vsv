@@ -12,6 +12,7 @@ import {
   CommandExecutionError,
   ConfigUpdateError,
   DocumentOpenError,
+  DocumentSaveError,
   FileNotFoundError,
   StateUpdateError,
   UnsupportedSchemeError,
@@ -73,25 +74,27 @@ describe('createRuntime', () => {
   describe('defineCommand / executeCommand', () => {
     test('registers a typed command with an Effect handler', () => {
       const r = createRuntime<CommandRegistry>()
-      r.defineCommand('vsv.greet', (args) => Effect.succeed(`Hello ${args.name}`))
+      Effect.runSync(r.defineCommand('vsv.greet', (args) => Effect.succeed(`Hello ${args.name}`)))
       expect(vscode).toHaveRegisteredCommand('vsv.greet')
     })
 
     test('handler receives typed args and returns typed result', async () => {
       const r = createRuntime<CommandRegistry>()
-      r.defineCommand('vsv.add', ({ a, b }) => Effect.succeed(a + b))
+      Effect.runSync(r.defineCommand('vsv.add', ({ a, b }) => Effect.succeed(a + b)))
       const result = await Effect.runPromise(r.executeCommand('vsv.add', { a: 2, b: 3 }))
       expect(result).toBe(5)
     })
 
     test('Effect handler can yield other effects mid-flow', async () => {
       const r = createRuntime<CommandRegistry>()
-      r.defineCommand('vsv.add', ({ a, b }) =>
-        Effect.gen(function* () {
-          // Sanity: ensure handlers can use full Effect.gen.
-          const sum = yield* Effect.succeed(a + b)
-          return sum
-        }),
+      Effect.runSync(
+        r.defineCommand('vsv.add', ({ a, b }) =>
+          Effect.gen(function* () {
+            // Sanity: ensure handlers can use full Effect.gen.
+            const sum = yield* Effect.succeed(a + b)
+            return sum
+          }),
+        ),
       )
       const result = await Effect.runPromise(r.executeCommand('vsv.add', { a: 7, b: 8 }))
       expect(result).toBe(15)
@@ -99,7 +102,7 @@ describe('createRuntime', () => {
 
     test('handler failure surfaces as CommandExecutionError on executeCommand', async () => {
       const r = createRuntime<CommandRegistry>()
-      r.defineCommand('vsv.fail', () => Effect.fail(new Error('boom')))
+      Effect.runSync(r.defineCommand('vsv.fail', () => Effect.fail(new Error('boom'))))
       const exit = await Effect.runPromiseExit(r.executeCommand('vsv.fail', undefined))
       expect(Exit.isFailure(exit)).toBe(true)
       if (Exit.isFailure(exit)) {
@@ -119,8 +122,10 @@ describe('createRuntime', () => {
         readonly detail: string
       }> {}
       const r = createRuntime<CommandRegistry>()
-      r.defineCommand('vsv.fail', () =>
-        Effect.fail(new HandlerSpecificError({ detail: 'precise' })),
+      Effect.runSync(
+        r.defineCommand('vsv.fail', () =>
+          Effect.fail(new HandlerSpecificError({ detail: 'precise' })),
+        ),
       )
       const exit = await Effect.runPromiseExit(r.executeCommand('vsv.fail', undefined))
       expect(Exit.isFailure(exit)).toBe(true)
@@ -280,8 +285,8 @@ describe('createRuntime', () => {
         ExternalCommandRegistryShape,
         ForeignConfigRegistry
       >()
-      const handle = r.defineForeignConfig('editor.codeLens')
-      expect(handle.get()).toBe(true)
+      const handle = Effect.runSync(r.defineForeignConfig('editor.codeLens'))
+      expect(Effect.runSync(handle.get())).toBe(true)
     })
 
     test('update writes to the chosen target without re-contributing the key', async () => {
@@ -294,9 +299,9 @@ describe('createRuntime', () => {
         ExternalCommandRegistryShape,
         ForeignConfigRegistry
       >()
-      const handle = r.defineForeignConfig('editor.codeLens')
+      const handle = Effect.runSync(r.defineForeignConfig('editor.codeLens'))
       await Effect.runPromise(handle.update(true, ConfigurationTarget.Global))
-      expect(handle.inspect()?.globalValue).toBe(true)
+      expect(Effect.runSync(handle.inspect())?.globalValue).toBe(true)
     })
 
     test('inspect returns per-target snapshot for snapshot/restore patterns', async () => {
@@ -310,13 +315,13 @@ describe('createRuntime', () => {
         ExternalCommandRegistryShape,
         ForeignConfigRegistry
       >()
-      const handle = r.defineForeignConfig('explorer.confirmDelete')
-      const original = handle.inspect()?.globalValue
+      const handle = Effect.runSync(r.defineForeignConfig('explorer.confirmDelete'))
+      const original = Effect.runSync(handle.inspect())?.globalValue
       expect(original).toBe(true)
       await Effect.runPromise(handle.update(false, ConfigurationTarget.Global))
-      expect(handle.inspect()?.globalValue).toBe(false)
+      expect(Effect.runSync(handle.inspect())?.globalValue).toBe(false)
       await Effect.runPromise(handle.update(original ?? true, ConfigurationTarget.Global))
-      expect(handle.inspect()?.globalValue).toBe(true)
+      expect(Effect.runSync(handle.inspect())?.globalValue).toBe(true)
     })
 
     test('getWithDefault falls back when unset', () => {
@@ -329,30 +334,30 @@ describe('createRuntime', () => {
         ExternalCommandRegistryShape,
         ForeignConfigRegistry
       >()
-      const handle = r.defineForeignConfig('problems.visibility')
-      expect(handle.getWithDefault(false)).toBe(false)
+      const handle = Effect.runSync(r.defineForeignConfig('problems.visibility'))
+      expect(Effect.runSync(handle.getWithDefault(false))).toBe(false)
     })
   })
 
   describe('defineConfig.inspect', () => {
     test('returns undefined for unset keys', () => {
       const r = createRuntime<CommandRegistryShape, ContextKeyRegistryShape, ConfigRegistry>()
-      const handle = r.defineConfig('enabled')
-      expect(handle.inspect()).toBeUndefined()
+      const handle = Effect.runSync(r.defineConfig('enabled'))
+      expect(Effect.runSync(handle.inspect())).toBeUndefined()
     })
 
     test('reflects per-target writes from update', async () => {
       const r = createRuntime<CommandRegistryShape, ContextKeyRegistryShape, ConfigRegistry>()
-      const handle = r.defineConfig('enabled')
+      const handle = Effect.runSync(r.defineConfig('enabled'))
       await Effect.runPromise(handle.update(true, ConfigurationTarget.Global))
-      const ins = handle.inspect()
+      const ins = Effect.runSync(handle.inspect())
       expect(ins?.globalValue).toBe(true)
       expect(ins?.workspaceValue).toBeUndefined()
     })
 
     test('update failure surfaces as ConfigUpdateError', async () => {
       const r = createRuntime<CommandRegistryShape, ContextKeyRegistryShape, ConfigRegistry>()
-      const handle = r.defineConfig('enabled')
+      const handle = Effect.runSync(r.defineConfig('enabled'))
       // Spy: replace the mock's update to throw, exercising the catch path.
       const vs = (await import('vscode')) as unknown as {
         workspace: {
@@ -382,30 +387,32 @@ describe('createRuntime', () => {
   })
 
   describe('defineContextKey', () => {
-    test('sets initial value via setContext command', () => {
+    test('sets initial value via setContext command', async () => {
       const r = createRuntime<CommandRegistryShape, ContextKeyRegistry>()
-      r.defineContextKey('vsv.isActive', false)
+      await Effect.runPromise(r.defineContextKey('vsv.isActive', false))
       expect(vscode).toHaveContextKey('vsv.isActive', false)
     })
 
     test('set() updates value and fires onChange listeners', async () => {
       const r = createRuntime<CommandRegistryShape, ContextKeyRegistry>()
-      const handle = r.defineContextKey('vsv.isActive', false)
+      const handle = await Effect.runPromise(r.defineContextKey('vsv.isActive', false))
       const observed: boolean[] = []
-      handle.onChange((v) => observed.push(v))
+      Effect.runSync(handle.onChange((v) => observed.push(v)))
       await Effect.runPromise(handle.set(true))
-      expect(handle.get()).toBe(true)
+      expect(Effect.runSync(handle.get())).toBe(true)
       expect(observed).toEqual([true])
       expect(vscode).toHaveContextKey('vsv.isActive', true)
     })
 
     test('onChange disposal removes listener', async () => {
       const r = createRuntime<CommandRegistryShape, ContextKeyRegistry>()
-      const handle = r.defineContextKey('vsv.mode', 'off')
+      const handle = await Effect.runPromise(r.defineContextKey('vsv.mode', 'off'))
       let count = 0
-      const d = handle.onChange(() => {
-        count += 1
-      })
+      const d = Effect.runSync(
+        handle.onChange(() => {
+          count += 1
+        }),
+      )
       await Effect.runPromise(handle.set('on'))
       d.dispose()
       await Effect.runPromise(handle.set('off'))
@@ -419,7 +426,7 @@ describe('createRuntime', () => {
       // channel — a throwing listener would otherwise become a defect that
       // crashes the calling fiber.
       const r = createRuntime<CommandRegistryShape, ContextKeyRegistry>()
-      const handle = r.defineContextKey('vsv.isActive', false)
+      const handle = await Effect.runPromise(r.defineContextKey('vsv.isActive', false))
       // Silence console.error for this test — the impl logs each listener
       // throw, which would otherwise spam test output.
       const originalError = console.error
@@ -428,21 +435,27 @@ describe('createRuntime', () => {
       try {
         let firstCalled = false
         let thirdCalled = false
-        handle.onChange(() => {
-          firstCalled = true
-        })
-        handle.onChange(() => {
-          throw new Error('listener crash — should be isolated')
-        })
-        handle.onChange(() => {
-          thirdCalled = true
-        })
+        Effect.runSync(
+          handle.onChange(() => {
+            firstCalled = true
+          }),
+        )
+        Effect.runSync(
+          handle.onChange(() => {
+            throw new Error('listener crash — should be isolated')
+          }),
+        )
+        Effect.runSync(
+          handle.onChange(() => {
+            thirdCalled = true
+          }),
+        )
         // Effect must succeed even though one listener threw.
         await Effect.runPromise(handle.set(true))
         expect(firstCalled).toBe(true)
         expect(thirdCalled).toBe(true)
         // State mutation still landed.
-        expect(handle.get()).toBe(true)
+        expect(Effect.runSync(handle.get())).toBe(true)
       } finally {
         console.error = originalError
       }
@@ -453,21 +466,21 @@ describe('createRuntime', () => {
     test('reads value from workspace configuration', () => {
       vscode.state.setConfiguration({ enabled: true })
       const r = createRuntime<CommandRegistryShape, ContextKeyRegistryShape, ConfigRegistry>()
-      const handle = r.defineConfig('enabled')
-      expect(handle.get()).toBe(true)
+      const handle = Effect.runSync(r.defineConfig('enabled'))
+      expect(Effect.runSync(handle.get())).toBe(true)
     })
 
     test('update writes value into configuration', async () => {
       const r = createRuntime<CommandRegistryShape, ContextKeyRegistryShape, ConfigRegistry>()
-      const handle = r.defineConfig('enabled')
+      const handle = Effect.runSync(r.defineConfig('enabled'))
       await Effect.runPromise(handle.update(true))
-      expect(handle.get()).toBe(true)
+      expect(Effect.runSync(handle.get())).toBe(true)
     })
 
     test('getWithDefault returns defaultValue when key is missing', () => {
       const r = createRuntime<CommandRegistryShape, ContextKeyRegistryShape, ConfigRegistry>()
-      const handle = r.defineConfig('enabled')
-      expect(handle.getWithDefault(false)).toBe(false)
+      const handle = Effect.runSync(r.defineConfig('enabled'))
+      expect(Effect.runSync(handle.getWithDefault(false))).toBe(false)
     })
   })
 
@@ -480,12 +493,12 @@ describe('createRuntime', () => {
         StateRegistry
       >()
       const ctx = createTestExtensionContext()
-      const handle = r.defineState(ctx, 'lastRun', 'global')
-      expect(handle.get()).toBeUndefined()
+      const handle = Effect.runSync(r.defineState(ctx, 'lastRun', 'global'))
+      expect(Effect.runSync(handle.get())).toBeUndefined()
       await Effect.runPromise(handle.set(1234))
-      expect(handle.get()).toBe(1234)
+      expect(Effect.runSync(handle.get())).toBe(1234)
       await Effect.runPromise(handle.delete())
-      expect(handle.get()).toBeUndefined()
+      expect(Effect.runSync(handle.get())).toBeUndefined()
     })
 
     test('getWithDefault returns defaultValue when key is missing', () => {
@@ -496,8 +509,8 @@ describe('createRuntime', () => {
         StateRegistry
       >()
       const ctx = createTestExtensionContext()
-      const handle = r.defineState(ctx, 'lastRun', 'global')
-      expect(handle.getWithDefault(0)).toBe(0)
+      const handle = Effect.runSync(r.defineState(ctx, 'lastRun', 'global'))
+      expect(Effect.runSync(handle.getWithDefault(0))).toBe(0)
     })
 
     test('getWithDefault returns stored value when key is set', async () => {
@@ -508,9 +521,9 @@ describe('createRuntime', () => {
         StateRegistry
       >()
       const ctx = createTestExtensionContext()
-      const handle = r.defineState(ctx, 'lastRun', 'global')
+      const handle = Effect.runSync(r.defineState(ctx, 'lastRun', 'global'))
       await Effect.runPromise(handle.set(7))
-      expect(handle.getWithDefault(0)).toBe(7)
+      expect(Effect.runSync(handle.getWithDefault(0))).toBe(7)
     })
 
     test('set rejection surfaces as StateUpdateError', async () => {
@@ -525,7 +538,7 @@ describe('createRuntime', () => {
       const original = ctx.globalState.update.bind(ctx.globalState)
       ctx.globalState.update = () => Promise.reject(new Error('memento offline'))
       try {
-        const handle = r.defineState(ctx, 'lastRun', 'global')
+        const handle = Effect.runSync(r.defineState(ctx, 'lastRun', 'global'))
         const exit = await Effect.runPromiseExit(handle.set(1))
         expect(Exit.isFailure(exit)).toBe(true)
         if (Exit.isFailure(exit)) {
@@ -549,13 +562,13 @@ describe('createRuntime', () => {
         StateRegistryShape,
         EventRegistry
       >()
-      const ev = r.defineEvent('pulse')
+      const ev = Effect.runSync(r.defineEvent('pulse'))
       const received: number[] = []
-      const d = ev.event((v) => received.push(v))
-      ev.fire(1)
-      ev.fire(2)
+      const d = Effect.runSync(ev.event((v) => received.push(v)))
+      Effect.runSync(ev.fire(1))
+      Effect.runSync(ev.fire(2))
       d.dispose()
-      ev.fire(3)
+      Effect.runSync(ev.fire(3))
       expect(received).toEqual([1, 2])
     })
   })
@@ -608,9 +621,7 @@ describe('createRuntime', () => {
     test('action buttons forward through and return the user-clicked label', async () => {
       const r = createRuntime()
       vscode.state.setNextMessageResult('Retry')
-      const picked = await Effect.runPromise(
-        r.notify.error('failed', 'Retry', 'Cancel'),
-      )
+      const picked = await Effect.runPromise(r.notify.error('failed', 'Retry', 'Cancel'))
       expect(picked).toBe('Retry')
       expect(vscode.state.getShownMessages()).toEqual([
         { level: 'error', message: 'failed', actions: ['Retry', 'Cancel'] },
@@ -658,14 +669,14 @@ describe('createRuntime', () => {
   describe('statusBar', () => {
     test('message records a status bar message with the default timeout', () => {
       const r = createRuntime()
-      r.statusBar.message('hello')
+      Effect.runSync(r.statusBar.message('hello'))
       const msgs = vscode.state.getStatusBarMessages()
       expect(msgs).toEqual([{ message: 'hello', hideAfterTimeout: 1500 }])
     })
 
     test('message respects an explicit timeout', () => {
       const r = createRuntime()
-      r.statusBar.message('hello', 5000)
+      Effect.runSync(r.statusBar.message('hello', 5000))
       expect(vscode.state.getStatusBarMessages()).toEqual([
         { message: 'hello', hideAfterTimeout: 5000 },
       ])
@@ -717,7 +728,7 @@ describe('createRuntime', () => {
   describe('workspace.folders', () => {
     test('returns undefined when no folder is open', () => {
       const r = createRuntime()
-      expect(r.workspace.folders).toBeUndefined()
+      expect(Effect.runSync(r.workspace.folders())).toBeUndefined()
     })
 
     test('returns the seeded folders with computed indexes', () => {
@@ -727,7 +738,7 @@ describe('createRuntime', () => {
         toString: () => 'file:///repo/a',
       } as unknown as import('vscode').Uri
       vscode.state.setWorkspaceFolders([{ uri: fakeUri }])
-      const folders = r.workspace.folders
+      const folders = Effect.runSync(r.workspace.folders())
       expect(folders).toHaveLength(1)
       expect(folders?.[0]?.index).toBe(0)
       expect(folders?.[0]?.name).toBe('a')
@@ -771,6 +782,57 @@ describe('createRuntime', () => {
     })
   })
 
+  describe('workspace.onDidChangeTextDocument', () => {
+    test('subscribes to text document change events', () => {
+      const r = createRuntime()
+      const doc = vscode.state.openDocument('file:///changed.ts', 'before')
+      const seen: string[] = []
+      const disposable = Effect.runSync(
+        r.workspace.onDidChangeTextDocument((event) => {
+          seen.push(event.contentChanges.map((change) => change.text).join(''))
+        }),
+      )
+
+      vscode.state.fireTextDocumentChange(doc, [{ text: '/done' }])
+      disposable.dispose()
+      vscode.state.fireTextDocumentChange(doc, [{ text: 'ignored' }])
+
+      expect(seen).toEqual(['/done'])
+    })
+  })
+
+  describe('workspace.saveTextDocument', () => {
+    test('saves a document and yields true', async () => {
+      const r = createRuntime()
+      const doc = vscode.state.openDocument('file:///save-me.ts', 'content')
+
+      const result = await Effect.runPromise(
+        r.workspace.saveTextDocument(doc as unknown as import('vscode').TextDocument),
+      )
+      expect(result).toBe(true)
+    })
+
+    test('rejection surfaces as DocumentSaveError', async () => {
+      const r = createRuntime()
+      const doc = vscode.state.openDocument(
+        'file:///save-fails.ts',
+        'content',
+      ) as unknown as import('vscode').TextDocument & { save: () => Promise<boolean> }
+      const original = doc.save
+      doc.save = () => Promise.reject(new Error('readonly'))
+      try {
+        const exit = await Effect.runPromiseExit(r.workspace.saveTextDocument(doc))
+        expect(Exit.isFailure(exit)).toBe(true)
+        if (Exit.isFailure(exit)) {
+          const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
+          expect(err).toBeInstanceOf(DocumentSaveError)
+        }
+      } finally {
+        doc.save = original
+      }
+    })
+  })
+
   describe('workspace.applyEdit', () => {
     test('applies an edit and yields true', async () => {
       const r = createRuntime()
@@ -789,7 +851,7 @@ describe('createRuntime', () => {
       const r = createRuntime()
       const vs = await import('vscode')
       const uri = vs.Uri.file('/repo/added')
-      const ok = r.workspace.updateFolders(0, 0, { uri, name: 'added' })
+      const ok = Effect.runSync(r.workspace.updateFolders(0, 0, { uri, name: 'added' }))
       expect(ok).toBe(true)
       const calls = vscode.state.getUpdateFolderCalls()
       expect(calls).toHaveLength(1)
@@ -801,7 +863,7 @@ describe('createRuntime', () => {
     test('returns false when vscode rejects the splice (e.g. invalid args)', () => {
       const r = createRuntime()
       vscode.state.setNextUpdateFoldersResult(false)
-      const ok = r.workspace.updateFolders(99, 99) // out-of-range delete
+      const ok = Effect.runSync(r.workspace.updateFolders(99, 99)) // out-of-range delete
       expect(ok).toBe(false)
     })
   })
@@ -922,6 +984,33 @@ describe('createRuntime', () => {
       const stat = await Effect.runPromise(r.fs.stat(dirUri))
       expect(stat.type).toBe(2 /* Directory */)
     })
+
+    test('rename moves file content', async () => {
+      const r = createRuntime()
+      const from = { fsPath: '/repo/comments.json.tmp' } as unknown as import('vscode').Uri
+      const to = { fsPath: '/repo/comments.json' } as unknown as import('vscode').Uri
+      const content = new TextEncoder().encode('{"schema":1}')
+      vscode.state.setFsContent(from.fsPath, content)
+
+      await Effect.runPromise(r.fs.rename(from, to, { overwrite: true }))
+
+      expect(vscode.state.getFsContent(from.fsPath)).toBeUndefined()
+      expect(vscode.state.getFsContent(to.fsPath)).toEqual(content)
+    })
+
+    test('rename on missing path fails with FileNotFoundError', async () => {
+      const r = createRuntime()
+      const from = { fsPath: '/repo/missing.tmp' } as unknown as import('vscode').Uri
+      const to = { fsPath: '/repo/comments.json' } as unknown as import('vscode').Uri
+      const exit = await Effect.runPromiseExit(r.fs.rename(from, to))
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) {
+        const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
+        expect(err).toBeInstanceOf(FileNotFoundError)
+        expect((err as FileNotFoundError).operation).toBe('rename')
+      }
+    })
   })
 
   describe('fs.realpath', () => {
@@ -997,7 +1086,7 @@ describe('createRuntime', () => {
         { label: 'a.ts', isPinned: false },
         { label: 'b.ts', isPinned: false },
       ])
-      const groups = r.tabs.groups
+      const groups = Effect.runSync(r.tabs.groups())
       const firstTab = groups[0]?.tabs[0]
       // The mock stores `MockTab` objects which match the structural shape vscode
       // exposes well enough for our wrapper. The cast is at the test boundary.
@@ -1013,9 +1102,8 @@ describe('createRuntime', () => {
     test('dispose() disposes all members', () => {
       const r = createRuntime()
       const flags = { a: false, b: false }
-      const group = r.disposables(
-        { dispose: () => (flags.a = true) },
-        { dispose: () => (flags.b = true) },
+      const group = Effect.runSync(
+        r.disposables({ dispose: () => (flags.a = true) }, { dispose: () => (flags.b = true) }),
       )
       group.dispose()
       expect(flags.a).toBe(true)

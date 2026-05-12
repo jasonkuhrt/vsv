@@ -13,10 +13,10 @@ vsv collapses all of that into one principle: **everything you could want to kno
 Concretely, this means:
 
 - **The manifest is the single source of truth.** `vsv.manifest.ts` declares every command, context key, configuration entry, persistent state slot, and event the extension contributes to or consumes from VSCode. From that one file, vsv generates `package.json` contributions, TypeScript registry types, the runtime bootstrap, and (eventually) typed wrappers for every imperative VSCode API the extension touches.
-- **Imperative is a code smell.** If you find yourself writing `vscode.commands.executeCommand('someBuiltin', ...)`, that's a vsv gap. The cure is a declarative entry — an `ExternalCommandDecl` that types the call, an event subscription that's lifecycle-managed, an `Editor` accessor that returns a typed handle. Extensions should reach for `vscode.*` only for value types and enums vsv hasn't yet wrapped.
+- **Imperative is a code smell.** If you find yourself writing `vscode.commands.executeCommand('someBuiltin', ...)`, that's a vsv gap. The cure is a declarative entry — an `ExternalCommandDecl` that types the call, an Effect-returning event subscription that's lifecycle-managed, an editor accessor that returns a typed Effect, or another runtime primitive. Extensions should reach for `vscode.*` only for value types and enums vsv hasn't yet wrapped.
 - **Extensions are forcing functions.** Every consumer extension is a probe into vsv's coverage. When an extension needs something vsv doesn't have, the right move is to add it to vsv — not to reach past. Each gap that surfaces from real code becomes a permanent improvement in vsv's surface.
 
-The endpoint is an SDK where you can author a non-trivial extension without ever importing from `'vscode'` directly. We're not there yet. We get closer with every extension that pushes a new edge case into vsv.
+The endpoint is an SDK where you can author a non-trivial extension without ever importing from `'vscode'` directly. Every runtime operation vsv exposes is Effect-first; every consumer edge case that still needs raw VS Code should become new vsv surface.
 
 ## Principles
 
@@ -30,7 +30,7 @@ The endpoint is an SDK where you can author a non-trivial extension without ever
 
 - **Typed manifest DSL** via Effect Schema tagged classes — `CommandDecl`, `ExternalCommandDecl`, `ContextKeyDecl`, `ConfigDecl`, `StateDecl`, `Manifest`. Each field carries inline JSDoc; the manifest is itself documentation.
 - **Codegen** from `vsv.manifest.ts` → TypeScript registries (`CommandRegistry`, `ExternalCommandRegistry`, `ContextKeyRegistry`, `ConfigRegistry`, `StateRegistry`) + `package.json` contributions sync.
-- **Typed runtime wrappers** over the `vscode` API — `defineCommand`, `executeCommand`, `defineContextKey`, `defineConfig`, `defineState`, `defineEvent`, `quickPick`, `disposables`. Each is indexed by the corresponding registry so id/key/value-type drift is caught at compile time.
+- **Typed Effect runtime wrappers** over the `vscode` API — `defineCommand`, `executeCommand`, `defineContextKey`, `defineConfig`, `defineState`, `defineEvent`, `quickPick`, `disposables`, and editor/workspace/window helpers. Each is indexed by the corresponding registry where applicable so id/key/value-type drift is caught at compile time.
 - **`bun:test`-native test utilities** with a hand-rolled `vscode` mock that covers the API shapes real extensions actually use, and is observable + settable for assertions.
 - **Custom oxlint rules** for VSCode-specific bugs that the language can't catch on its own.
 - **Loader-hook bootstrap generator** so consumer `.ts` source runs live under VSCode's Node extension host without a build step on every save.

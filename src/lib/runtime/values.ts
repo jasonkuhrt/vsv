@@ -71,15 +71,39 @@ export type FileStat = vscode.FileStat
 export type TextDocument = vscode.TextDocument
 
 /**
- * Workspace folder. Carries `uri`, `name`, `index`. Available via
- * `rt.workspace.folders[i]`.
+ * Event payload emitted when a text document changes. Available via
+ * `rt.workspace.onDidChangeTextDocument(...)`.
+ *
+ * Type-only re-export from `vscode.TextDocumentChangeEvent`.
+ */
+export type TextDocumentChangeEvent = vscode.TextDocumentChangeEvent
+
+/**
+ * Workspace folder. Carries `uri`, `name`, `index`. Available from
+ * `rt.workspace.folders()`.
  *
  * Type-only re-export from `vscode.WorkspaceFolder`.
  */
 export type WorkspaceFolder = vscode.WorkspaceFolder
 
 /**
- * Active editor for a text document. Available via `rt.editor.active`.
+ * Extension activation context passed to `activate(ctx)`. Owns subscriptions
+ * plus extension/workspace/global storage.
+ *
+ * Type-only re-export from `vscode.ExtensionContext`.
+ */
+export type ExtensionContext = vscode.ExtensionContext
+
+/**
+ * Disposable resource returned by VS Code registration APIs. Push into
+ * `ExtensionContext.subscriptions` or combine with `rt.disposables(...)`.
+ *
+ * Type-only re-export from `vscode.Disposable`.
+ */
+export type Disposable = vscode.Disposable
+
+/**
+ * Active editor for a text document. Available via `rt.editor.active()`.
  * Carries `document`, `selection` (the primary selection), `selections`
  * (all multi-cursors), `visibleRanges`, and edit/reveal helpers.
  *
@@ -88,7 +112,7 @@ export type WorkspaceFolder = vscode.WorkspaceFolder
 export type TextEditor = vscode.TextEditor
 
 /**
- * Single editor tab. Available through `rt.tabs.groups[i].tabs[j]`.
+ * Single editor tab. Available through `rt.tabs.groups()`.
  * `input` carries the per-kind data (text, diff, notebook, terminal, etc.).
  *
  * Type-only re-export from `vscode.Tab`.
@@ -96,7 +120,7 @@ export type TextEditor = vscode.TextEditor
 export type Tab = vscode.Tab
 
 /**
- * Editor tab group (one per split). Available via `rt.tabs.groups[i]`.
+ * Editor tab group (one per split). Available via `rt.tabs.groups()`.
  * Carries `tabs[]`, `activeTab`, and `viewColumn`.
  *
  * Type-only re-export from `vscode.TabGroup`.
