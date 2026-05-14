@@ -19,7 +19,9 @@ export class ExternalCommandDeclStruct extends Schema.TaggedClass<ExternalComman
 export type ExternalCommandDecl<
   A extends Schema.Schema.AnyNoContext = Schema.Schema.AnyNoContext,
   R extends Schema.Schema.AnyNoContext = Schema.Schema.AnyNoContext,
-> = Omit<ExternalCommandDeclStruct, 'args' | 'result'> & {
+  Id extends string = string,
+> = Omit<ExternalCommandDeclStruct, 'id' | 'args' | 'result'> & {
+  readonly id: Id
   readonly args: A
   readonly result: R
 }

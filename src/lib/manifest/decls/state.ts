@@ -9,10 +9,15 @@ export class StateDeclStruct extends Schema.TaggedClass<StateDeclStruct>()('Stat
 }) {}
 
 /** Typed authoring shape with the value schema preserved. */
-export type StateDecl<V extends Schema.Schema.AnyNoContext = Schema.Schema.AnyNoContext> = Omit<
-  StateDeclStruct,
-  'valueSchema'
-> & { readonly valueSchema: V }
+export type StateDecl<
+  V extends Schema.Schema.AnyNoContext = Schema.Schema.AnyNoContext,
+  K extends string = string,
+  S extends 'global' | 'workspace' = 'global' | 'workspace',
+> = Omit<StateDeclStruct, 'key' | 'scope' | 'valueSchema'> & {
+  readonly key: K
+  readonly scope: S
+  readonly valueSchema: V
+}
 
 /**
  * Declares persistent state — a key-value entry backed by VS Code's

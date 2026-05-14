@@ -12,8 +12,13 @@ export class ForeignConfigDeclStruct extends Schema.TaggedClass<ForeignConfigDec
 ) {}
 
 /** Typed authoring shape with the value schema preserved. */
-export type ForeignConfigDecl<V extends Schema.Schema.AnyNoContext = Schema.Schema.AnyNoContext> =
-  Omit<ForeignConfigDeclStruct, 'valueSchema'> & { readonly valueSchema: V }
+export type ForeignConfigDecl<
+  V extends Schema.Schema.AnyNoContext = Schema.Schema.AnyNoContext,
+  K extends string = string,
+> = Omit<ForeignConfigDeclStruct, 'fullKey' | 'valueSchema'> & {
+  readonly fullKey: K
+  readonly valueSchema: V
+}
 
 /**
  * Declares a configuration setting **owned by VS Code core or another
@@ -31,18 +36,18 @@ export type ForeignConfigDecl<V extends Schema.Schema.AnyNoContext = Schema.Sche
  *   typed accessor returned by `defineForeignConfig`.
  * - `ownedBy` — optional documentation note ("vscode core", "publisher.ext").
  */
-const factory = <V extends Schema.Schema.AnyNoContext>(spec: {
-  readonly fullKey: string
+const factory = <V extends Schema.Schema.AnyNoContext, const K extends string>(spec: {
+  readonly fullKey: K
   readonly valueSchema: V
   readonly ownedBy?: string
-}): ForeignConfigDecl<V> => {
+}): ForeignConfigDecl<V, K> => {
   const struct = ForeignConfigDeclStruct.make({
     fullKey: spec.fullKey,
     valueSchema: spec.valueSchema,
     ...(spec.ownedBy !== undefined ? { ownedBy: spec.ownedBy } : {}),
   })
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- factory captures V on the returned value
-  return struct as ForeignConfigDecl<V>
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- factory captures V and the fullKey literal K
+  return struct as ForeignConfigDecl<V, K>
 }
 
 export const ForeignConfigDecl = Object.assign(factory, {

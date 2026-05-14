@@ -23,7 +23,9 @@ export class CommandDeclStruct extends Schema.TaggedClass<CommandDeclStruct>()('
 export type CommandDecl<
   A extends Schema.Schema.AnyNoContext = Schema.Schema.AnyNoContext,
   R extends Schema.Schema.AnyNoContext = Schema.Schema.AnyNoContext,
-> = Omit<CommandDeclStruct, 'args' | 'result'> & {
+  Id extends string = string,
+> = Omit<CommandDeclStruct, 'id' | 'args' | 'result'> & {
+  readonly id: Id
   readonly args: A
   readonly result: R
 }
@@ -54,13 +56,17 @@ export type CommandDecl<
  *   pickers.
  * - `category` — Command Palette grouping (rendered as `Category: Title`).
  */
-const factory = <A extends Schema.Schema.AnyNoContext, R extends Schema.Schema.AnyNoContext>(spec: {
-  readonly id: string
+const factory = <
+  A extends Schema.Schema.AnyNoContext,
+  R extends Schema.Schema.AnyNoContext,
+  const Id extends string,
+>(spec: {
+  readonly id: Id
   readonly args: A
   readonly result: R
   readonly title?: string
   readonly category?: string
-}): CommandDecl<A, R> => {
+}): CommandDecl<A, R, Id> => {
   const struct = CommandDeclStruct.make({
     id: spec.id,
     args: spec.args,
@@ -68,8 +74,8 @@ const factory = <A extends Schema.Schema.AnyNoContext, R extends Schema.Schema.A
     ...(spec.title !== undefined ? { title: spec.title } : {}),
     ...(spec.category !== undefined ? { category: spec.category } : {}),
   })
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- factory captures A,R on the returned value; structural class erases them
-  return struct as CommandDecl<A, R>
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- factory captures A, R, and the id literal Id on the returned value
+  return struct as CommandDecl<A, R, Id>
 }
 
 export const CommandDecl = Object.assign(factory, {
