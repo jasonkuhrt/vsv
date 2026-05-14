@@ -43,6 +43,7 @@
     ".": "./build/exports/index.js",
     "./manifest": "./build/exports/manifest.js",
     "./runtime": "./build/exports/runtime.js",
+    "./when": "./build/exports/when.js",
     "./runtime/test": "./build/exports/runtime-test.js",
     "./runtime/test/preload": "./build/exports/runtime-test-preload.js",
     "./cli": "./build/exports/cli.js"
