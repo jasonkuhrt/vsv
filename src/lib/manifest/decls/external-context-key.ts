@@ -11,10 +11,14 @@ export class ExternalContextKeyDeclStruct extends Schema.TaggedClass<ExternalCon
   },
 ) {}
 
-/** Typed authoring shape with the value schema preserved. */
+/** Typed authoring shape with the value schema and name literal preserved. */
 export type ExternalContextKeyDecl<
   V extends Schema.Schema.AnyNoContext = Schema.Schema.AnyNoContext,
-> = Omit<ExternalContextKeyDeclStruct, 'valueType'> & { readonly valueType: V }
+  N extends string = string,
+> = Omit<ExternalContextKeyDeclStruct, 'name' | 'valueType'> & {
+  readonly name: N
+  readonly valueType: V
+}
 
 /**
  * Declares a context key **owned by VS Code core or another extension**
@@ -38,18 +42,18 @@ export type ExternalContextKeyDecl<
  * - `ownedBy` — optional documentation note ("vscode core",
  *   "publisher.ext").
  */
-const factory = <V extends Schema.Schema.AnyNoContext>(spec: {
-  readonly name: string
+const factory = <V extends Schema.Schema.AnyNoContext, const N extends string>(spec: {
+  readonly name: N
   readonly valueType: V
   readonly ownedBy?: string
-}): ExternalContextKeyDecl<V> => {
+}): ExternalContextKeyDecl<V, N> => {
   const struct = ExternalContextKeyDeclStruct.make({
     name: spec.name,
     valueType: spec.valueType,
     ...(spec.ownedBy !== undefined ? { ownedBy: spec.ownedBy } : {}),
   })
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- factory captures V on the returned value
-  return struct as ExternalContextKeyDecl<V>
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- factory captures V and the name literal N on the returned value
+  return struct as ExternalContextKeyDecl<V, N>
 }
 
 export const ExternalContextKeyDecl = Object.assign(factory, {
