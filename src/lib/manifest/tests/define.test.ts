@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Schema } from 'effect'
-import { CommandDecl, ConfigDecl, ContextKeyDecl } from '../schema.ts'
+import { CommandDecl, ConfigDecl, ContextKeyDecl, ExternalContextKeyDecl } from '../schema.ts'
 import { defineManifest, type TypedManifest } from '../define.ts'
 
 describe('defineManifest', () => {
@@ -81,6 +81,28 @@ describe('defineManifest', () => {
     expect(m.config[0].valueSchema).toBe(Schema.Boolean)
     expect(m.config[1].valueSchema).toBe(Schema.Number)
     expect(m.config[1].description).toBe('Sensitivity threshold')
+  })
+
+  test('externalContextKeys tuple captures closed-enum value domains', () => {
+    const previewKey = ExternalContextKeyDecl({
+      name: 'activeCustomEditorId',
+      valueType: Schema.Literal(
+        'vscode.markdown.preview.editor',
+        'vscode.audioPreview',
+      ),
+      ownedBy: 'vscode core',
+    })
+    const m = defineManifest({
+      name: 'ext',
+      publisher: 'jasonkuhrt',
+      externalContextKeys: [previewKey],
+    })
+    expect(m.externalContextKeys[0]).toBe(previewKey)
+    expect(m.externalContextKeys[0].ownedBy).toBe('vscode core')
+    // Type level: m.externalContextKeys[0].valueType narrows to
+    // `Schema.Literal<['vscode.markdown.preview.editor', 'vscode.audioPreview']>`
+    // — the closed-enum union flows into the manifest tuple for the
+    // future `When.eq.activeCustomEditorId(...)` builder.
   })
 
   test('TypedManifest type alias is exported for downstream consumers', () => {

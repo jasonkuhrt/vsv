@@ -9,6 +9,7 @@ import { CommandDecl } from './decls/command.ts'
 import { ConfigDecl } from './decls/config.ts'
 import { ContextKeyDecl } from './decls/context-key.ts'
 import { ExternalCommandDecl } from './decls/external-command.ts'
+import { ExternalContextKeyDecl } from './decls/external-context-key.ts'
 import { ForeignConfigDecl } from './decls/foreign-config.ts'
 import { StateDecl } from './decls/state.ts'
 
@@ -17,6 +18,7 @@ export {
   ConfigDecl,
   ContextKeyDecl,
   ExternalCommandDecl,
+  ExternalContextKeyDecl,
   ForeignConfigDecl,
   StateDecl,
 }
@@ -59,6 +61,7 @@ export class Manifest extends Schema.TaggedClass<Manifest>()('Manifest', {
   commands: Schema.optional(Schema.Array(CommandDecl.Struct)),
   externalCommands: Schema.optional(Schema.Array(ExternalCommandDecl.Struct)),
   contextKeys: Schema.optional(Schema.Array(ContextKeyDecl.Struct)),
+  externalContextKeys: Schema.optional(Schema.Array(ExternalContextKeyDecl.Struct)),
   config: Schema.optional(Schema.Array(ConfigDecl.Struct)),
   foreignConfig: Schema.optional(Schema.Array(ForeignConfigDecl.Struct)),
   state: Schema.optional(Schema.Array(StateDecl.Struct)),

@@ -3,6 +3,7 @@ export {
   ConfigDecl,
   ContextKeyDecl,
   ExternalCommandDecl,
+  ExternalContextKeyDecl,
   ForeignConfigDecl,
   Manifest,
   StateDecl,
