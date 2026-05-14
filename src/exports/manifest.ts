@@ -7,4 +7,4 @@ export {
   Manifest,
   StateDecl,
 } from '#lib/manifest/schema'
-export { defineManifest } from '#lib/manifest/define'
+export { defineManifest, type ManifestSpec, type TypedManifest } from '#lib/manifest/define'
