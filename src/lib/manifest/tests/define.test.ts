@@ -86,10 +86,7 @@ describe('defineManifest', () => {
   test('externalContextKeys tuple captures closed-enum value domains', () => {
     const previewKey = ExternalContextKeyDecl({
       name: 'activeCustomEditorId',
-      valueType: Schema.Literal(
-        'vscode.markdown.preview.editor',
-        'vscode.audioPreview',
-      ),
+      valueType: Schema.Literal('vscode.markdown.preview.editor', 'vscode.audioPreview'),
       ownedBy: 'vscode core',
     })
     const m = defineManifest({
