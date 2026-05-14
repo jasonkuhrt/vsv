@@ -25,7 +25,7 @@ describe('emitRegistries', () => {
       name: 'ext',
       publisher: 'jasonkuhrt',
       commands: [
-        CommandDecl.make({
+        CommandDecl({
           id: 'ext.greet',
           args: Schema.Struct({ name: Schema.String }),
           result: Schema.String,
@@ -43,7 +43,7 @@ describe('emitRegistries', () => {
       name: 'ext',
       publisher: 'jasonkuhrt',
       contextKeys: [
-        ContextKeyDecl.make({
+        ContextKeyDecl({
           name: 'ext.active',
           valueType: Schema.Boolean,
         }),
@@ -58,7 +58,7 @@ describe('emitRegistries', () => {
       name: 'ext',
       publisher: 'jasonkuhrt',
       config: [
-        ConfigDecl.make({
+        ConfigDecl({
           key: 'ext.enabled',
           valueSchema: Schema.Boolean,
         }),
@@ -73,7 +73,7 @@ describe('emitRegistries', () => {
       name: 'ext',
       publisher: 'jasonkuhrt',
       state: [
-        StateDecl.make({
+        StateDecl({
           key: 'ext.lastRun',
           scope: 'global',
           valueSchema: Schema.Number,

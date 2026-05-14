@@ -1,9 +1,9 @@
-import { Schema } from 'effect'
 import { describe, expect, test } from 'bun:test'
+import { Schema } from 'effect'
 import { CommandDecl, Manifest } from '../schema.ts'
 
 describe('Manifest', () => {
-  test('constructs via .make with minimal fields', () => {
+  test('constructs via Manifest.make with minimal fields', () => {
     const m = Manifest.make({ name: 'my-ext', publisher: 'jasonkuhrt' })
     expect(m._tag).toBe('Manifest')
     expect(m.name).toBe('my-ext')
@@ -12,8 +12,8 @@ describe('Manifest', () => {
     expect(m.commands).toBeUndefined()
   })
 
-  test('constructs via .make with full fields', () => {
-    const cmd = CommandDecl.make({
+  test('constructs via Manifest.make with full fields', () => {
+    const cmd = CommandDecl({
       id: 'my-ext.doThing',
       args: Schema.String,
       result: Schema.Void,
@@ -91,8 +91,8 @@ describe('Manifest', () => {
 })
 
 describe('CommandDecl', () => {
-  test('constructs via .make', () => {
-    const cmd = CommandDecl.make({
+  test('constructs via the typed factory call', () => {
+    const cmd = CommandDecl({
       id: 'foo.bar',
       args: Schema.Void,
       result: Schema.Void,
@@ -101,13 +101,43 @@ describe('CommandDecl', () => {
     expect(cmd.id).toBe('foo.bar')
   })
 
+  test('captures the args/result schema generics on the returned value', () => {
+    const cmd = CommandDecl({
+      id: 'foo.bar',
+      args: Schema.String,
+      result: Schema.Number,
+    })
+    // Type-level: cmd.args is `typeof Schema.String`, cmd.result is `typeof Schema.Number`.
+    // Runtime: the schemas are stored verbatim.
+    expect(cmd.args).toBe(Schema.String)
+    expect(cmd.result).toBe(Schema.Number)
+  })
+
+  test('CommandDecl.is narrows unknown to a CommandDecl', () => {
+    const cmd = CommandDecl({ id: 'x', args: Schema.Void, result: Schema.Void })
+    expect(CommandDecl.is(cmd)).toBe(true)
+    expect(CommandDecl.is({ _tag: 'CommandDecl', id: 'x', args: 42, result: 42 })).toBe(false)
+    expect(CommandDecl.is('not a decl')).toBe(false)
+  })
+
+  test('rejects non-Schema args field via AnySchema runtime guard', () => {
+    expect(() =>
+      Schema.decodeUnknownSync(CommandDecl.Struct)({
+        _tag: 'CommandDecl',
+        id: 'x',
+        args: 42,
+        result: 42,
+      }),
+    ).toThrow()
+  })
+
   test('rejects empty id', () => {
     expect(() =>
-      Schema.decodeUnknownSync(CommandDecl)({
+      Schema.decodeUnknownSync(CommandDecl.Struct)({
         _tag: 'CommandDecl',
         id: '',
-        args: null,
-        result: null,
+        args: Schema.Void,
+        result: Schema.Void,
       }),
     ).toThrow()
   })

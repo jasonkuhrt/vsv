@@ -29,7 +29,7 @@ describe('mergeManifestIntoPackageJson', () => {
       name: 'ext',
       publisher: 'jasonkuhrt',
       commands: [
-        CommandDecl.make({
+        CommandDecl({
           id: 'ext.foo',
           args: Schema.String,
           result: Schema.Void,
@@ -48,7 +48,7 @@ describe('mergeManifestIntoPackageJson', () => {
       name: 'ext',
       publisher: 'jasonkuhrt',
       config: [
-        ConfigDecl.make({
+        ConfigDecl({
           key: 'ext.enabled',
           valueSchema: Schema.Boolean,
           description: 'Toggle the extension',
@@ -70,7 +70,7 @@ describe('mergeManifestIntoPackageJson', () => {
       name: 'ext',
       publisher: 'jasonkuhrt',
       foreignConfig: [
-        ForeignConfigDecl.make({
+        ForeignConfigDecl({
           fullKey: 'editor.codeLens',
           valueSchema: Schema.Boolean,
         }),
@@ -87,9 +87,9 @@ describe('mergeManifestIntoPackageJson', () => {
     const m = Manifest.make({
       name: 'ext',
       publisher: 'jasonkuhrt',
-      config: [ConfigDecl.make({ key: 'ext.enabled', valueSchema: Schema.Boolean })],
+      config: [ConfigDecl({ key: 'ext.enabled', valueSchema: Schema.Boolean })],
       foreignConfig: [
-        ForeignConfigDecl.make({
+        ForeignConfigDecl({
           fullKey: 'editor.codeLens',
           valueSchema: Schema.Boolean,
         }),

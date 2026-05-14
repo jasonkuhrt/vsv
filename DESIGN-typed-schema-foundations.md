@@ -12,13 +12,13 @@ without a codegen detour**.
 
 Today, parts of vsv satisfy this and parts do not. The parts that do not all
 share the same defect: a manifest declaration field that should carry an
-*Effect Schema* — and through it, the schema's *encoded* and *decoded*
+_Effect Schema_ — and through it, the schema's _encoded_ and _decoded_
 TypeScript types — is declared as `Schema.Unknown`. The field accepts any
 value at runtime, including real schemas, but TypeScript sees `unknown`.
 Type information is then reconstructed by `codegen` walking the manifest at
 build time and emitting `*RegistryShape` types that the runtime imports.
 
-The codegen path is load-bearing not because it's the *right* place for type
+The codegen path is load-bearing not because it's the _right_ place for type
 flow, but because the manifest decl classes have nowhere to put the schema
 type. The right end state collapses the codegen step from "produces the
 type-information-of-record" to "produces side-effect artifacts (package.json,
@@ -73,14 +73,13 @@ import { Schema } from 'effect'
  *
  * Uses Effect's official `Schema.isSchema` guard, so version-stable.
  */
-export const AnySchema: Schema.Schema<Schema.Schema.AnyNoContext> =
-  Schema.declare(
-    (u): u is Schema.Schema.AnyNoContext => Schema.isSchema(u),
-    {
-      identifier: 'AnySchema',
-      description: 'An Effect Schema with no service requirements',
-    },
-  )
+export const AnySchema: Schema.Schema<Schema.Schema.AnyNoContext> = Schema.declare(
+  (u): u is Schema.Schema.AnyNoContext => Schema.isSchema(u),
+  {
+    identifier: 'AnySchema',
+    description: 'An Effect Schema with no service requirements',
+  },
+)
 ```
 
 `Schema.Schema.AnyNoContext` = `Schema<any, any, never>` is the right
@@ -115,14 +114,11 @@ import { AnySchema } from '#lib/schema/any-schema'
  * Structural schema — what serialization, codegen, and the IR see.
  * The valueType field is erased to `Schema.Schema.AnyNoContext`.
  */
-class ContextKeyDeclStruct extends Schema.TaggedClass<ContextKeyDeclStruct>()(
-  'ContextKeyDecl',
-  {
-    name: Schema.NonEmptyTrimmedString,
-    valueType: AnySchema,
-    defaultValue: Schema.optional(Schema.Unknown),
-  },
-) {}
+class ContextKeyDeclStruct extends Schema.TaggedClass<ContextKeyDeclStruct>()('ContextKeyDecl', {
+  name: Schema.NonEmptyTrimmedString,
+  valueType: AnySchema,
+  defaultValue: Schema.optional(Schema.Unknown),
+}) {}
 
 /**
  * Typed authoring shape — what extension authors see at call sites.
@@ -132,8 +128,10 @@ class ContextKeyDeclStruct extends Schema.TaggedClass<ContextKeyDeclStruct>()(
  * Structurally satisfies `ContextKeyDeclStruct` but carries the
  * tighter `valueType: V` field at the type level.
  */
-export interface ContextKeyDecl<V extends Schema.Schema.AnyNoContext>
-  extends Omit<ContextKeyDeclStruct, 'valueType' | 'defaultValue'> {
+export interface ContextKeyDecl<V extends Schema.Schema.AnyNoContext> extends Omit<
+  ContextKeyDeclStruct,
+  'valueType' | 'defaultValue'
+> {
   readonly valueType: V
   readonly defaultValue?: Schema.Schema.Type<V> | undefined
 }
@@ -168,8 +166,7 @@ export const ContextKeyDecl = Object.assign(factory, {
 }
 
 export namespace ContextKeyDecl {
-  export type Type<D> =
-    D extends ContextKeyDecl<infer V> ? V : never
+  export type Type<D> = D extends ContextKeyDecl<infer V> ? V : never
 }
 ```
 
@@ -185,14 +182,14 @@ Applies symmetrically to `CommandDecl`, `ExternalCommandDecl`,
 
 ### Field-by-field plan for replacing `Schema.Unknown`
 
-| Decl                  | Field                | Today           | After Gap 0                                          |
-| --------------------- | -------------------- | --------------- | ---------------------------------------------------- |
-| `ContextKeyDecl`      | `valueType`          | `Schema.Unknown` | `AnySchema`, generic `V` on factory                  |
-| `ConfigDecl`          | `valueSchema`        | `Schema.Unknown` | `AnySchema`, generic `V` on factory                  |
-| `ForeignConfigDecl`   | `valueSchema`        | `Schema.Unknown` | `AnySchema`, generic `V` on factory                  |
-| `StateDecl`           | `valueSchema`        | `Schema.Unknown` | `AnySchema`, generic `V` on factory                  |
-| `CommandDecl`         | `args`, `result`     | `Schema.Unknown` | `AnySchema` each, generics `A` and `R` on factory    |
-| `ExternalCommandDecl` | `args`, `result`     | `Schema.Unknown` | `AnySchema` each, generics `A` and `R` on factory    |
+| Decl                  | Field            | Today            | After Gap 0                                       |
+| --------------------- | ---------------- | ---------------- | ------------------------------------------------- |
+| `ContextKeyDecl`      | `valueType`      | `Schema.Unknown` | `AnySchema`, generic `V` on factory               |
+| `ConfigDecl`          | `valueSchema`    | `Schema.Unknown` | `AnySchema`, generic `V` on factory               |
+| `ForeignConfigDecl`   | `valueSchema`    | `Schema.Unknown` | `AnySchema`, generic `V` on factory               |
+| `StateDecl`           | `valueSchema`    | `Schema.Unknown` | `AnySchema`, generic `V` on factory               |
+| `CommandDecl`         | `args`, `result` | `Schema.Unknown` | `AnySchema` each, generics `A` and `R` on factory |
+| `ExternalCommandDecl` | `args`, `result` | `Schema.Unknown` | `AnySchema` each, generics `A` and `R` on factory |
 
 Eight fields total. Eight `Schema.Unknown` → `AnySchema` substitutions.
 Eight factories with captured generics. Single commit.
@@ -214,7 +211,7 @@ via `<const M>` so authors don't have to manually annotate `as const`:
 ```ts
 // src/lib/manifest/define.ts
 
-import type { CommandDecl, ContextKeyDecl, /* … */ } from './decls'
+import type { CommandDecl, ContextKeyDecl /* … */ } from './decls'
 
 export interface ManifestSpec {
   readonly name: string
@@ -241,9 +238,7 @@ export interface TypedManifest<M extends ManifestSpec> {
   // remains addressable as Manifest.Struct.
 }
 
-export const defineManifest = <const M extends ManifestSpec>(
-  spec: M,
-): TypedManifest<M> => ({
+export const defineManifest = <const M extends ManifestSpec>(spec: M): TypedManifest<M> => ({
   _tag: 'Manifest',
   spec,
 })
@@ -264,7 +259,7 @@ authoring layer.
 
 ## Gap 1 — `ExternalContextKeyDecl`
 
-vsv has `ExternalCommandDecl` for commands the extension *consumes* but
+vsv has `ExternalCommandDecl` for commands the extension _consumes_ but
 does not own. There is no symmetric primitive for context keys. The
 markdown-preview sub-plugin (and every consumer-side sub-plugin in
 key-binder) needs to declare "I read `activeCustomEditorId`; its values
@@ -286,8 +281,10 @@ class ExternalContextKeyDeclStruct extends Schema.TaggedClass<ExternalContextKey
   },
 ) {}
 
-export interface ExternalContextKeyDecl<V extends Schema.Schema.AnyNoContext>
-  extends Omit<ExternalContextKeyDeclStruct, 'valueType'> {
+export interface ExternalContextKeyDecl<V extends Schema.Schema.AnyNoContext> extends Omit<
+  ExternalContextKeyDeclStruct,
+  'valueType'
+> {
   readonly valueType: V
 }
 
@@ -318,18 +315,18 @@ if codegen retains a cross-decl role (see Gap 3).
 ## Gap 2 — value-domain semantics derived from Schema shape
 
 Once `valueType` is typed via the factory generic (Gap 0) and the
-manifest preserves it via `<const M>` (Gap 0.5), the *shape* of the
+manifest preserves it via `<const M>` (Gap 0.5), the _shape_ of the
 declared Schema determines which operators the `When` builder exposes
 for that key. No new "domain" declarations are needed.
 
-| `valueType` AST node           | Domain class | Operators                                |
-| ------------------------------ | ------------ | ---------------------------------------- |
-| `BooleanKeyword`               | Boolean      | `is`, `not` (via combinator)             |
-| `Literal` (string-typed)       | Closed enum  | `eq`, `neq`, `in`                        |
-| `Literal` (numeric-typed)      | Closed enum  | `eq`, `neq`, `lt`, `lte`, `gt`, `gte`    |
-| `Union<Literal,...>`           | Closed enum  | as above, union of literal values        |
-| `StringKeyword`                | Open string  | `eq`, `neq`, `match`                     |
-| `NumberKeyword` / `Int` filter | Numeric      | `eq`, `neq`, `lt`, `lte`, `gt`, `gte`    |
+| `valueType` AST node           | Domain class | Operators                             |
+| ------------------------------ | ------------ | ------------------------------------- |
+| `BooleanKeyword`               | Boolean      | `is`, `not` (via combinator)          |
+| `Literal` (string-typed)       | Closed enum  | `eq`, `neq`, `in`                     |
+| `Literal` (numeric-typed)      | Closed enum  | `eq`, `neq`, `lt`, `lte`, `gt`, `gte` |
+| `Union<Literal,...>`           | Closed enum  | as above, union of literal values     |
+| `StringKeyword`                | Open string  | `eq`, `neq`, `match`                  |
+| `NumberKeyword` / `Int` filter | Numeric      | `eq`, `neq`, `lt`, `lte`, `gt`, `gte` |
 
 The classification lives as a mapped type at the type level, mirrored by
 a runtime AST inspection (via `SchemaAST.is*` predicates — all exported
@@ -349,7 +346,7 @@ contribute values to the same context key:
 - `vsv-audio` sub-plugin declares
   `ExternalContextKeyDecl({ name: 'activeCustomEditorId', valueType: Schema.Literal('vscode.audioPreview') })`.
 
-The `When.eq.activeCustomEditorId(...)` builder must accept the *union*
+The `When.eq.activeCustomEditorId(...)` builder must accept the _union_
 of contributed values across the type system.
 
 ### Two strategies
@@ -373,7 +370,8 @@ type-checker latency on large manifests. **Before committing to A,
 benchmark on a synthetic 100-decl manifest** with the actual mapped
 type implementation. The criterion to flip to B: hover latency on a
 consumer file exceeds 500ms, or `tsc --noEmit` runtime regresses by
->30% from baseline.
+
+> 30% from baseline.
 
 Until the benchmark says otherwise, A is the design. Codegen demotes to
 "side-effect artifacts only" (package.json sync, catalog files). The
@@ -397,16 +395,13 @@ type role only" — still cleaner than today's "all type roles."
 fields are the same defect on the command side. After Gap 0:
 
 ```ts
-class CommandDeclStruct extends Schema.TaggedClass<CommandDeclStruct>()(
-  'CommandDecl',
-  {
-    id: Schema.NonEmptyTrimmedString,
-    args: AnySchema,
-    result: AnySchema,
-    title: Schema.optional(Schema.String),
-    category: Schema.optional(Schema.String),
-  },
-) {}
+class CommandDeclStruct extends Schema.TaggedClass<CommandDeclStruct>()('CommandDecl', {
+  id: Schema.NonEmptyTrimmedString,
+  args: AnySchema,
+  result: AnySchema,
+  title: Schema.optional(Schema.String),
+  category: Schema.optional(Schema.String),
+}) {}
 
 export interface CommandDecl<
   A extends Schema.Schema.AnyNoContext,
@@ -416,17 +411,16 @@ export interface CommandDecl<
   readonly result: R
 }
 
-const factory = <
-  A extends Schema.Schema.AnyNoContext,
-  R extends Schema.Schema.AnyNoContext,
->(spec: {
+const factory = <A extends Schema.Schema.AnyNoContext, R extends Schema.Schema.AnyNoContext>(spec: {
   readonly id: string
   readonly args: A
   readonly result: R
   readonly title?: string
   readonly category?: string
 }): CommandDecl<A, R> =>
-  CommandDeclStruct.make({ /* … */ }) as CommandDecl<A, R>
+  CommandDeclStruct.make({
+    /* … */
+  }) as CommandDecl<A, R>
 
 export const CommandDecl = Object.assign(factory, {
   Struct: CommandDeclStruct,
