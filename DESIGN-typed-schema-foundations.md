@@ -591,14 +591,21 @@ fixed:
 
 ---
 
-## Gap 7 — `WhenClause` codec discoverability
+## Gap 7 — `WhenClause` codec discoverability **(done)**
 
-The codec ships as a public subpath (`@jasonkuhrt/vsv/when`) but is not
-narrated. Add a `docs/when.md`:
+The codec ships as a public subpath (`@jasonkuhrt/vsv/when`) but was not
+narrated. `docs/when.md` covers it:
 
 - Two-layer split (`WhenAstStruct` vs `WhenClause`).
-- Per-variant codec design.
-- The `When` builder once Gap 5 lands.
+- Per-variant codec design (the AST-variant table).
+- The `When` builder — manifest-typed authoring API.
+
+`docs/when.md` was first written in `bacac94` (right after Gap 5) and
+refreshed for Gap 6: the "Known grammar holes" section — which listed the
+holes as open and two of them mis-diagnosed — is replaced by a "Grammar
+coverage" section stating what the audited codec supports, the
+normalizer (not identity round-trip) behaviour, and the property +
+fixture guards.
 
 ---
 

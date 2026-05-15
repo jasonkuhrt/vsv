@@ -115,9 +115,14 @@ context keys (owned via `contextKeys`, consumed via
 | `$.eq(key, value)`   | `WhenEq`        | Same — value is `string \| number \| boolean` today |
 | `$.neq(key, value)`  | `WhenNeq`       | Same                                                |
 | `$.not(inner)`       | `WhenNot`       | Wraps any `WhenAst`                                 |
-| `$.and(...terms)`    | `WhenAnd`       | Variadic conjunction                                |
-| `$.or(...terms)`     | `WhenOr`        | Variadic disjunction                                |
+| `$.and(a, b, …)`     | `WhenAnd`       | Conjunction — requires at least two terms           |
+| `$.or(a, b, …)`      | `WhenOr`        | Disjunction — requires at least two terms           |
 | `$.unsafe.raw(text)` | `WhenUnsafeRaw` | Escape hatch — survives encoding verbatim, no parse |
+
+`and`/`or` take `(first, second, ...rest)` — a one-term conjunction is just
+the term itself, so the typed signature rejects it. (`WhenAnd.make` /
+`WhenOr.make` can still construct a degenerate 0/1-term node directly; the
+codec doesn't round-trip one.)
 
 A typo on a context-key name is a compile error:
 
@@ -134,21 +139,51 @@ comparison operators) is the next slice. Today, `eq`/`neq` accept
 holds, but TypeScript can't yet stop you from passing a string to a
 boolean-typed key.
 
-## Known grammar holes in `WhenClause`
+## Grammar coverage
 
-Documented for a focused audit pass:
+The codec was audited against VS Code's own context-key scanner and parser
+(`src/vs/platform/contextkey/common/scanner.ts` + `contextkey.ts`). It
+covers the grammar VS Code accepts, including:
 
-- **Hyphenated identifiers** (`auxiliary-bar-visible`) — current
-  identifier regex excludes `-`. Fall-through to `WhenUnsafeRaw`.
-- **Backslash-escaped quotes** in string literals (`'it\\'s'`).
-- **Newer regex flags** `d` and `v` — current flag set is `[gimsuy]`.
-- **Key-vs-key comparison** (`key1 == key2`) — current value pattern
-  requires a literal.
-- **`in`-clause whitespace** — current regex requires exactly `\s+`.
+- **Hyphenated identifiers** — `github.copilot-chat.activated`,
+  `auxiliary-bar-visible`.
+- **Bare-word RHS** — VS Code's `==`/`!=`/`in` accept an unquoted
+  identifier as a _string_. `a == b` decodes to `WhenEq('a', 'b')`; there
+  is no key-vs-key comparison in the grammar.
+- **Scientific-notation numbers** — `count > 1e3`.
+- **Multi-line regex patterns** — the scanner consumes any character up to
+  the closing `/`.
 
-A property test using `Arbitrary.make(WhenAstStruct)` to assert
-`decode(encode(ast)) === ast` for randomly generated ASTs is the
-intended mitigation strategy.
+Two things that look like gaps but are not — VS Code itself doesn't
+support them, so neither does vsv:
+
+- **No escape syntax inside `'…'` strings.** A literal `'` cannot appear
+  in a quoted value; VS Code's scanner has no escape handling there.
+- **Regex flags are exactly `i g s m y u`.** The ES2024 `d` and `v` flags
+  are not part of the grammar.
+
+Anything genuinely outside the grammar decodes to `WhenUnsafeRaw`, which
+re-encodes verbatim.
+
+### Normalizer, not identity round-trip
+
+`decode` is many-to-one — several strings collapse to the same AST, and
+`encode` emits one canonical form:
+
+- Redundant parens are dropped: `(a)` → `WhenBoolKey('a')` → `a`.
+- A bare-word RHS is re-emitted quoted: `a == b` → `a == 'b'`.
+- Whitespace is normalized to single spaces.
+
+So `decode(encode(decode(s)))` equals `decode(s)` — the first round-trip
+canonicalizes, every subsequent one is a fixpoint.
+
+### Guards
+
+- `tests/property.test.ts` — fast-check round-trip over a hand-built
+  generator of well-formed ASTs, plus the total structural codec.
+- `tests/fixtures.test.ts` — real `when`-clauses harvested from VS Code's
+  bundled extensions; each must decode to a typed tree (no `WhenUnsafeRaw`)
+  and re-decode to a fixpoint.
 
 ## Design
 
