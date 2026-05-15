@@ -363,31 +363,19 @@ the manifest at build time, emits a `.ts` file with
 The `When` builder is derived from the registry, not the manifest.
 Trivial mapped types; build step required.
 
-### Pick — A, with a measured fallback to B
+### Pick — A
 
-The principled answer is A: types flow from source. The risk is
-type-checker latency on large manifests. **Before committing to A,
-benchmark on a synthetic 100-decl manifest** with the actual mapped
-type implementation. The criterion to flip to B: hover latency on a
-consumer file exceeds 500ms, or `tsc --noEmit` runtime regresses by
+Types flow from source. A is the design — no benchmark gate. The same
+mapped-type machinery already backs Gaps 4–6 (`CommandRegistryOf<M>`,
+`ContextKeyRegistryOf<M>`, the `When` builder's `ContextKeyName<M>`):
+walking the manifest tuple at the type level is the established pattern,
+and the value-domain merge is one more mapped type over the same tuples,
+not a new mechanism. Codegen stays demoted to side-effect artifacts only
+(`package.json` sync, catalog files).
 
-> 30% from baseline.
-
-Until the benchmark says otherwise, A is the design. Codegen demotes to
-"side-effect artifacts only" (package.json sync, catalog files). The
-runtime's `ContextKeyRegistryShape = Record<string, unknown>` (today,
-`runtime/create.ts:43`) becomes a derived type that the manifest's
-`<const M>` capture feeds.
-
-### Decision contingency
-
-If the benchmark fails A, retain the typed factory + `<const M>`
-capture (Gap 0 + Gap 0.5) and add codegen-emitted registries for
-cross-decl unions only. Per-decl typing still flows from source. The
-demotion of codegen narrows from "no type role" to "cross-decl union
-type role only" — still cleaner than today's "all type roles."
-
----
+If type-checker latency ever becomes a measured problem on a real
+consumer, strategy B (codegen-emitted pre-merged unions) is the fallback —
+but that is a reaction to evidence, not a gate on landing A.
 
 ## Gap 4 — typed `args`/`result` per command **(done — see f494d6c, f512af9, f185edb, 6eb29f7)**
 
@@ -627,16 +615,14 @@ Each numbered step is one commit.
 4. **Gap 4** — Tighten `CommandDecl` and `ExternalCommandDecl` factory
    generics. Update runtime `defineCommand`/`executeCommand` typing to
    read from the manifest tuple, not codegen registries.
-5. **Benchmark for Gap 3** — synthetic 100-decl manifest, measure
-   `tsc --noEmit` runtime and consumer-file hover latency. Decide A vs
-   B. Pure measurement, not yet code.
-6. **Gap 2 + Gap 3 (decision)** — value-domain mapped types derived
-   from the manifest tuple. Implementation reflects benchmark outcome.
-7. **Gap 5** — `When` builder. `src/lib/when/builder.ts`. Imports
+5. **Gap 2 + Gap 3** — value-domain mapped types derived from the
+   manifest tuple (strategy A). No benchmark gate.
+6. **Gap 5** — `When` builder. `src/lib/when/builder.ts`. Imports
    `manifest/define.ts` types only.
-8. **Gap 6** — grammar audit on `WhenClause`. Property-test pass with
-   `Arbitrary.make`. Fixture corpus from real-world clauses.
-9. **Gap 7** — `docs/when.md`.
+7. **Gap 6** — grammar audit on `WhenClause`. Property-test pass with
+   a hand-built well-formed-AST arbitrary. Fixture corpus from
+   real-world clauses.
+8. **Gap 7** — `docs/when.md`.
 
 Gaps 0–4 are the schema-side foundation. Gap 5 is the downstream
 authoring API. Gaps 6–7 are quality and discoverability.
