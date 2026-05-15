@@ -12,7 +12,7 @@ vsv collapses all of that into one principle: **everything you could want to kno
 
 Concretely, this means:
 
-- **The manifest is the single source of truth.** `vsv.manifest.ts` declares every command, context key, configuration entry, persistent state slot, and event the extension contributes to or consumes from VSCode. From that one file, vsv generates `package.json` contributions, TypeScript registry types, the runtime bootstrap, and (eventually) typed wrappers for every imperative VSCode API the extension touches.
+- **The manifest is the single source of truth.** `vsv.manifest.ts` declares every command, context key, configuration entry, persistent state slot, and event the extension contributes to or consumes from VSCode. The runtime reads its types straight from that file — every `defineCommand`/`defineContextKey`/`defineState` call is checked against the manifest with no codegen step in the type path. Codegen syncs `package.json` contributions and generates the runtime bootstrap; it emits no TypeScript.
 - **Imperative is a code smell.** If you find yourself writing `vscode.commands.executeCommand('someBuiltin', ...)`, that's a vsv gap. The cure is a declarative entry — an `ExternalCommandDecl` that types the call, an Effect-returning event subscription that's lifecycle-managed, an editor accessor that returns a typed Effect, or another runtime primitive. Extensions should reach for `vscode.*` only for value types and enums vsv hasn't yet wrapped.
 - **Extensions are forcing functions.** Every consumer extension is a probe into vsv's coverage. When an extension needs something vsv doesn't have, the right move is to add it to vsv — not to reach past. Each gap that surfaces from real code becomes a permanent improvement in vsv's surface.
 
@@ -21,16 +21,17 @@ The endpoint is an SDK where you can author a non-trivial extension without ever
 ## Principles
 
 1. **Declarative over imperative.** Anything that can be expressed as a typed declaration in the manifest belongs in the manifest. Anything that cannot, but should be statically describable (events, accessors, lifecycles), gets a typed runtime primitive.
-2. **One source of truth.** The manifest. `package.json`, registry types, and runtime bootstrap are _outputs_ — never edited by hand.
+2. **One source of truth.** The manifest. `package.json` contributions and the runtime bootstrap are _outputs_ — never edited by hand. Runtime types flow from the manifest directly through TypeScript; there is no generated registry file to drift.
 3. **Type safety end to end.** A command id typoed in `executeCommand` is a compile error. A setting whose value type drifts from its schema is a compile error. A persistent state slot whose scope mismatches the manifest is a compile error.
 4. **No re-implementation, only re-shaping.** vsv is a surface over `vscode.*`, not a runtime replacement. Bugs and quirks are documented and routed; behavior is not duplicated.
 5. **Forcing-function development.** New surface area is admitted when an extension needs it. Theoretical completeness is not a goal; consumer-driven completeness is.
 
 ## What it provides
 
-- **Typed manifest DSL** via Effect Schema tagged classes — `CommandDecl`, `ExternalCommandDecl`, `ContextKeyDecl`, `ConfigDecl`, `StateDecl`, `Manifest`. Each field carries inline JSDoc; the manifest is itself documentation.
-- **Codegen** from `vsv.manifest.ts` → TypeScript registries (`CommandRegistry`, `ExternalCommandRegistry`, `ContextKeyRegistry`, `ConfigRegistry`, `StateRegistry`) + `package.json` contributions sync.
-- **Typed Effect runtime wrappers** over the `vscode` API — `defineCommand`, `executeCommand`, `defineContextKey`, `defineConfig`, `defineState`, `defineEvent`, `quickPick`, `disposables`, and editor/workspace/window helpers. Each is indexed by the corresponding registry where applicable so id/key/value-type drift is caught at compile time.
+- **Typed manifest DSL** via Effect Schema tagged classes — `CommandDecl`, `ExternalCommandDecl`, `ContextKeyDecl`, `ExternalContextKeyDecl`, `ConfigDecl`, `ForeignConfigDecl`, `StateDecl`. `defineManifest` captures the manifest's literal shape, so the runtime derives every method's typing from it directly — no generated registry file. Each field carries inline JSDoc; the manifest is itself documentation.
+- **Typed Effect runtime** over the `vscode` API — `defineCommand`/`executeCommand`/`executeExternalCommand`, `defineContextKey`, `defineConfig`/`defineForeignConfig`, `defineState`, `defineEvent`, `quickPick`, plus the `notify`, `clipboard`, `fs`, `workspace`, `editor`, `tabs`, `window`, and `statusBar` namespaces. Every operation returns an `Effect`; an id, key, or value type that drifts from the manifest is a compile error.
+- **Typed `when`-clause authoring** — the `When` builder writes VSCode `when`-clause expressions from manifest-declared context keys, with each operator's value narrowed to the key's declared domain. `WhenClause` is a bidirectional codec between the clause AST and VSCode's clause string.
+- **Codegen** syncs the manifest into `package.json` `contributes.*`. It emits no TypeScript — runtime types come from the manifest source.
 - **`bun:test`-native test utilities** with a hand-rolled `vscode` mock that covers the API shapes real extensions actually use, and is observable + settable for assertions.
 - **Custom oxlint rules** for VSCode-specific bugs that the language can't catch on its own.
 - **Loader-hook bootstrap generator** so consumer `.ts` source runs live under VSCode's Node extension host without a build step on every save.
@@ -38,18 +39,9 @@ The endpoint is an SDK where you can author a non-trivial extension without ever
 
 ## What it does NOT provide (yet)
 
-vsv's coverage of the VSCode API is consumer-driven. Surface area lands when an extension needs it. Currently absent (representative, not exhaustive):
+vsv's coverage of the VSCode API is consumer-driven — surface area lands when an extension needs it. The runtime currently wraps commands, context keys, configuration (own and foreign), persistent state, custom events, the filesystem, workspace folders and edits, the active editor, tab groups, window dialogs, notifications, clipboard, and the status bar.
 
-- Filesystem primitives (`workspace.fs.{readDirectory, stat, readFile, writeFile}`)
-- Editor accessors (`window.activeTextEditor`, tab groups, text document modeling)
-- Workspace folder accessors and watchers
-- Notification primitives (`showInformationMessage`, `showWarningMessage`, `showErrorMessage`, `showInputBox`, status bar)
-- Clipboard
-- URI construction helpers
-- Workspace edit construction
-- Foreign command typing through `executeCommand` (the `ExternalCommandRegistry` is currently doc-only — see [`DEVIATIONS.md`](./TODO.md) and consumer notes)
-
-If your extension needs one of these, the right move is to file the gap and add it to vsv.
+Whole VSCode API areas remain unwrapped — terminals, the debug API, webviews, language-feature providers, decorations, and source control. An extension that needs one of those should file the gap and add it to vsv.
 
 ## Quick start
 
@@ -101,6 +93,7 @@ Subpaths scope by area:
 ```ts
 import { defineManifest, CommandDecl } from '@jasonkuhrt/vsv/manifest'
 import { createRuntime } from '@jasonkuhrt/vsv/runtime'
+import { When, WhenClause } from '@jasonkuhrt/vsv/when'
 import { installVSCodeMock, createTestExtensionContext } from '@jasonkuhrt/vsv/runtime/test'
 ```
 
