@@ -96,45 +96,133 @@ export type WhenAst =
 
 // ─── Internal helpers (private to the module) ────────────────────────────
 
-const KEY = '[A-Za-z_][\\w.]*'
-const VAL = `'[^']*'|-?\\d+(?:\\.\\d+)?|true|false`
+// Identifier (context-key name). VS Code's actual identifier surface
+// (scanner.ts `_string`) is a wide charset including hyphens, dots, `<>/\:`
+// etc. We accept the common subset that real-world extensions use; anything
+// outside falls through to WhenUnsafeRaw. The hyphen extends what 1b59ffb
+// shipped — `auxiliary-bar-visible`-style keys are widespread in VS Code core.
+const KEY = '[A-Za-z_][\\w.-]*'
+// Numeric literal — matches VS Code's `parseFloat` surface (decimal optionally
+// with sign, fractional part, and scientific notation). Without the
+// `[eE][+-]?\d+` tail, `String(1e+21)` would fail to re-decode.
+const NUM = '-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?'
+// Value literal accepted by `==` / `!=` RHS. VS Code's parser accepts
+// `Str | QuotedStr | True | False | In` here; the bare-identifier `Str`
+// alternative makes `key1 == key2` parse as `key1 == 'key2'` (RHS is a string)
+// — there is no key-vs-key comparison in VS Code's grammar.
+const VAL = `'[^']*'|${NUM}|true|false|${KEY}`
 
 const reKey = new RegExp(`^${KEY}$`)
 const reEq = new RegExp(`^\\s*(${KEY})\\s*==\\s*(${VAL})\\s*$`)
 const reNeq = new RegExp(`^\\s*(${KEY})\\s*!=\\s*(${VAL})\\s*$`)
-const reMatch = new RegExp(`^\\s*(${KEY})\\s*=~\\s*/(.+)/([gimsuy]*)\\s*$`)
-const reIn = new RegExp(`^\\s*(${KEY})\\s+in\\s+(${KEY})\\s*$`)
-const reCmp = new RegExp(`^\\s*(${KEY})\\s*(<=|>=|<|>)\\s*(-?\\d+(?:\\.\\d+)?)\\s*$`)
+// VS Code's regex-flag set (scanner.ts `_regexFlags`) is exactly `{i,g,s,m,y,u}`
+// — `d` (hasIndices) and `v` (Unicode sets) are NOT recognized. The pattern
+// group is `[\s\S]+` (not `.+`) because VS Code's scanner consumes any
+// character — newlines included — up to the closing unescaped `/`.
+const reMatch = new RegExp(`^\\s*(${KEY})\\s*=~\\s*/([\\s\\S]+)/([gimsuy]*)\\s*$`)
+// `in`-clause RHS accepts the same `_value()` surface as `==`: bare identifier
+// or quoted string. Quoted strings are uncommon here but VS Code permits them.
+const reIn = new RegExp(`^\\s*(${KEY})\\s+in\\s+('[^']*'|${KEY})\\s*$`)
+const reCmp = new RegExp(`^\\s*(${KEY})\\s*(<=|>=|<|>)\\s*(${NUM})\\s*$`)
 
+const reNum = new RegExp(`^${NUM}$`)
+
+/**
+ * Decode a captured `==`/`!=` RHS lexeme into its value. The RHS surface is
+ * `'…'` (quoted string), a numeric literal, `true`/`false`, or a bare
+ * identifier. A bare identifier decodes to a *string* — VS Code's `_value()`
+ * treats unquoted words as string literals, so `a == b` means `a` equals the
+ * string `"b"`. The `reNum` test (not `Number(raw)`) disambiguates numbers
+ * from identifiers cleanly: `Number('Infinity')` is finite, but `'Infinity'`
+ * is not a numeric *literal*, so it stays a string.
+ */
 const parseValueLit = (raw: string): string | number | boolean => {
   if (raw.startsWith(`'`)) return raw.slice(1, -1)
   if (raw === 'true') return true
   if (raw === 'false') return false
-  return Number(raw)
+  if (reNum.test(raw)) return Number(raw)
+  return raw
 }
 
+/** Encode a value into a `==`/`!=` RHS lexeme. Strings are always quoted. */
 const formatValueLit = (v: string | number | boolean): string => {
   if (typeof v === 'string') return `'${v}'`
   return String(v)
+}
+
+/** Decode a captured `in`-clause RHS lexeme — bare identifier or `'…'`. */
+const parseSetLit = (raw: string): string => (raw.startsWith(`'`) ? raw.slice(1, -1) : raw)
+
+/**
+ * Encode an `in`-clause RHS. Emits the bare form when the set name is
+ * identifier-shaped (the common case — `resource in fooSet`), quoting only
+ * when the name contains characters the bare-identifier grammar rejects.
+ */
+const formatSetLit = (s: string): string => (reKey.test(s) ? s : `'${s}'`)
+
+/**
+ * If `s[i]` opens a *terminated* string (`'…'`) or regex (`/…/`) literal,
+ * return the index just past its close; otherwise return `i` unchanged. The
+ * paren-matchers below use this to skip literals, so a `(` inside
+ * `key == '('` or inside a regex character class doesn't throw off depth
+ * counting.
+ *
+ * VS Code's `'…'` strings have no escape syntax (scanner.ts `_quotedString`);
+ * `/…/` regexes escape with `\`. An *unterminated* delimiter returns `i`
+ * unchanged — the caller then treats that `'` or `/` as an ordinary
+ * character. This matters for round-trip stability: a `WhenUnsafeRaw` whose
+ * text holds a lone `'` (e.g. `('foo)`) must not let that quote swallow the
+ * trailing `)`, or the outer parens look unbalanced and `WhenNot` re-wrapping
+ * accretes a `(…)` layer on every round-trip.
+ */
+const skipLiteral = (s: string, i: number): number => {
+  const open = s.charAt(i)
+  if (open === `'`) {
+    let j = i + 1
+    while (j < s.length && s.charAt(j) !== `'`) j++
+    return j < s.length ? j + 1 : i
+  }
+  if (open === '/') {
+    let j = i + 1
+    while (j < s.length) {
+      const c = s.charAt(j)
+      if (c === '\\') j += 2
+      else if (c === '/') return j + 1
+      else j++
+    }
+    return i
+  }
+  return i
 }
 
 /**
  * Strip a single layer of balanced outer parens, returning the inner text.
  * Returns `null` when the input is not wrapped by a single matched pair of
  * parens that spans the entire string (e.g. `(a) && (b)` has parens but
- * they don't enclose the whole string).
+ * they don't enclose the whole string). Parens inside string/regex literals
+ * are skipped via `skipLiteral`.
  */
 const stripOuterParens = (s: string): string | null => {
   const t = s.trim()
   if (!t.startsWith('(') || !t.endsWith(')')) return null
   let depth = 0
-  for (let i = 0; i < t.length; i++) {
+  let i = 0
+  while (i < t.length) {
     const c = t.charAt(i)
+    if (c === `'` || c === '/') {
+      const skipped = skipLiteral(t, i)
+      if (skipped > i) {
+        i = skipped
+        continue
+      }
+      // Unterminated delimiter — fall through, treat as an ordinary char.
+    }
     if (c === '(') depth++
     else if (c === ')') {
       depth--
       if (depth === 0 && i !== t.length - 1) return null
     }
+    i++
   }
   return depth === 0 ? t.slice(1, -1).trim() : null
 }
@@ -152,15 +240,25 @@ const stripNotEnvelope = (s: string): string | null => {
 
 /**
  * Paren-aware top-level split. Splits `s` on every occurrence of `sep`
- * that sits at paren depth 0. Always returns at least one chunk.
+ * that sits at paren depth 0. Always returns at least one chunk. String and
+ * regex literals are skipped via `skipLiteral`, so a `&&` inside `'a && b'`
+ * or a `/…/` is not a split point.
  */
 const splitTopLevel = (s: string, sep: '&&' | '||'): ReadonlyArray<string> => {
   const result: string[] = []
   let depth = 0
   let last = 0
   let i = 0
-  while (i <= s.length - sep.length) {
+  while (i < s.length) {
     const c = s.charAt(i)
+    if (c === `'` || c === '/') {
+      const skipped = skipLiteral(s, i)
+      if (skipped > i) {
+        i = skipped
+        continue
+      }
+      // Unterminated delimiter — fall through, treat as an ordinary char.
+    }
     if (c === '(') {
       depth++
       i++
@@ -198,10 +296,18 @@ export class WhenNeq extends Schema.TaggedClass<WhenNeq>()('WhenNeq', {
   value: Schema.Union(Schema.String, Schema.Number, Schema.Boolean),
 }) {}
 
+/**
+ * Regex flag string for `WhenMatch`. VS Code's scanner accepts exactly the
+ * flag set `{i,g,s,m,y,u}`; an empty flag string is the *absence* of flags
+ * (the field is omitted), never `''`. Constraining the field here keeps the
+ * AST from holding a flag value the codec can't faithfully serialize.
+ */
+const WhenMatchFlags = Schema.String.pipe(Schema.pattern(/^[gimsuy]+$/))
+
 export class WhenMatch extends Schema.TaggedClass<WhenMatch>()('WhenMatch', {
   key: Schema.NonEmptyTrimmedString,
   pattern: Schema.NonEmptyTrimmedString,
-  flags: Schema.optional(Schema.String),
+  flags: Schema.optional(WhenMatchFlags),
 }) {}
 
 export class WhenIn extends Schema.TaggedClass<WhenIn>()('WhenIn', {
@@ -219,6 +325,16 @@ export class WhenNot extends Schema.TaggedClass<WhenNot>()('WhenNot', {
   inner: Schema.suspend((): Schema.Schema<WhenAst> => WhenAstStruct),
 }) {}
 
+// `&&` and `||` are binary-or-wider — a meaningful conjunction/disjunction
+// has ≥ 2 terms. The codec only round-trips that case; a 0- or 1-term node
+// has no canonical string (an empty join produces `''`, which fails to
+// decode). The `When` builder's `and`/`or` enforce ≥ 2 at the typed
+// authoring boundary. A schema-level `minItems(2)` would be the stricter
+// guarantee, but it cannot be applied here: a filter on this recursive
+// `terms` field breaks `transformOrFail`'s encode for combinators nested
+// inside another combinator (the encode side re-validates the encoded
+// struct, and the filter rejects it mid-transform). So the ≥ 2 invariant
+// lives in the builder, not the schema.
 export class WhenAnd extends Schema.TaggedClass<WhenAnd>()('WhenAnd', {
   terms: Schema.Array(Schema.suspend((): Schema.Schema<WhenAst> => WhenAstStruct)),
 }) {}
@@ -327,9 +443,9 @@ const WhenInClause = Schema.transformOrFail(Schema.String, WhenIn, {
       return failType(WhenIn, text, `not an 'in' expression: ${text}`)
     }
     // oxlint-disable-next-line typescript/no-non-null-assertion -- reIn has 2 required capture groups
-    return ParseResult.succeed(WhenIn.make({ key: m[1]!, set: m[2]! }))
+    return ParseResult.succeed(WhenIn.make({ key: m[1]!, set: parseSetLit(m[2]!) }))
   },
-  encode: ({ key, set }) => ParseResult.succeed(`${key} in ${set}`),
+  encode: ({ key, set }) => ParseResult.succeed(`${key} in ${formatSetLit(set)}`),
 })
 
 const WhenCmpClause = Schema.transformOrFail(Schema.String, WhenCmp, {
@@ -431,6 +547,22 @@ const WhenUnsafeRawClause = Schema.transformOrFail(Schema.String, WhenUnsafeRaw,
  * the precedence-binding combinators (`||` before `&&`, then `!`) are
  * tried first so paren-aware top-level splits discriminate before any
  * atom matches. `WhenUnsafeRaw` is the catch-all fallback.
+ *
+ * **This codec is a normalizer, not an identity round-trip.** `decode` is
+ * many-to-one: several distinct strings collapse to the same AST, and
+ * `encode` always emits one canonical form. Specifically —
+ *
+ * - **Redundant parens are dropped.** `(a)` decodes to `WhenBoolKey('a')`;
+ *   re-encoding emits `a`. Combinators always re-emit their own minimal
+ *   parens (`(t1) && (t2)`).
+ * - **Bare-word RHS becomes quoted.** `a == b` decodes to
+ *   `WhenEq('a', 'b')` — VS Code treats an unquoted RHS word as a string —
+ *   and re-encodes as `a == 'b'`.
+ * - **Whitespace is normalized** to the canonical single-space form.
+ *
+ * So `decode(encode(decode(s)))` equals `decode(s)`: the first round-trip
+ * canonicalizes, every subsequent one is a fixpoint. The property tests in
+ * `tests/property.test.ts` enforce this.
  *
  * @example
  * ```ts

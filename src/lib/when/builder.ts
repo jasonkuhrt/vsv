@@ -74,11 +74,17 @@ export interface WhenBuilder<M> {
   /** Negation — `!(inner)`. */
   readonly not: (inner: WhenAst) => WhenAst
 
-  /** Conjunction — `(t1) && (t2) && …`. */
-  readonly and: (...terms: ReadonlyArray<WhenAst>) => WhenAst
+  /**
+   * Conjunction — `(t1) && (t2) && …`. Requires at least two terms; a
+   * one-term `&&` is just the term itself, and `WhenAnd` rejects it.
+   */
+  readonly and: (first: WhenAst, second: WhenAst, ...rest: ReadonlyArray<WhenAst>) => WhenAst
 
-  /** Disjunction — `(t1) || (t2) || …`. */
-  readonly or: (...terms: ReadonlyArray<WhenAst>) => WhenAst
+  /**
+   * Disjunction — `(t1) || (t2) || …`. Requires at least two terms; a
+   * one-term `||` is just the term itself, and `WhenOr` rejects it.
+   */
+  readonly or: (first: WhenAst, second: WhenAst, ...rest: ReadonlyArray<WhenAst>) => WhenAst
 
   /**
    * Untyped escape hatch for clauses that reference context keys not
@@ -134,8 +140,8 @@ export const When = <
   eq: (key, value) => WhenEq.make({ key, value }),
   neq: (key, value) => WhenNeq.make({ key, value }),
   not: (inner) => WhenNot.make({ inner }),
-  and: (...terms) => WhenAnd.make({ terms }),
-  or: (...terms) => WhenOr.make({ terms }),
+  and: (first, second, ...rest) => WhenAnd.make({ terms: [first, second, ...rest] }),
+  or: (first, second, ...rest) => WhenOr.make({ terms: [first, second, ...rest] }),
   unsafe: {
     raw: (text) => WhenUnsafeRaw.make({ text }),
   },

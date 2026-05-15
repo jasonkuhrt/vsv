@@ -529,31 +529,65 @@ imports nothing from `manifest/`. The import-direction invariant holds.
 
 ---
 
-## Gap 6 — grammar holes in the shipped `WhenClause` codec
+## Gap 6 — grammar holes in the shipped `WhenClause` codec **(done)**
 
 Documented in commit `1b59ffb`. None block downstream consumption, but
 each is a real input VS Code accepts that the codec currently routes to
-`WhenUnsafeRaw`. Resolve in a dedicated audit pass.
+`WhenUnsafeRaw`. Resolved in a dedicated audit pass.
 
-- **Hyphenated identifiers** — VS Code permits `-` in key names
-  (`auxiliary-bar-visible`). Current regex `[A-Za-z_][\w.]*` excludes
-  `-`.
-- **String-literal escaping** — `'[^']*'` rejects backslash-escaped
-  single quotes (`'it\\'s'`).
-- **Regex flag set** — current `[gimsuy]*` excludes `d` and `v`.
-- **Key-vs-key comparison** — `key1 == key2`. Current value pattern
-  requires a literal.
-- **`in`-clause whitespace** — current regex requires exactly `\s+`.
-- **Idempotent paren canonicalization** — `(a)` decodes to
-  `WhenBoolKey(a)`; re-encoding emits `a`. Document as canonical.
+The audit cross-checked every claimed hole against VS Code's own source
+(`src/vs/platform/contextkey/common/scanner.ts` + `contextkey.ts`).
+**Two of the six were mis-diagnosed** — the codec already matched VS
+Code; the design doc was wrong:
 
-### Mitigation
+| #   | Hole                                             | Verdict                                                                                                                                                                                                       |
+| --- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Hyphenated identifiers (`auxiliary-bar-visible`) | **Real.** Fixed — `KEY` regex now `[A-Za-z_][\w.-]*`.                                                                                                                                                         |
+| 2   | String-literal escaping (`'it\'s'`)              | **Not a hole.** VS Code's `_quotedString` has no escape syntax either (TODO in its source). `'[^']*'` already matches VS Code.                                                                                |
+| 3   | Regex flag set missing `d`/`v`                   | **Not a hole.** VS Code's `_regexFlags` set is exactly `{i,g,s,m,y,u}`. `[gimsuy]*` already matches.                                                                                                          |
+| 4   | Key-vs-key comparison `key1 == key2`             | **Real, re-framed.** VS Code has no key-vs-key op — its `_value()` accepts a bare identifier as a _string_. Fixed — `VAL` now includes a bare-identifier alternative; `a == b` decodes to `WhenEq('a', 'b')`. |
+| 5   | `in`-clause whitespace                           | **Real, re-framed.** Whitespace was fine; the real gap was the RHS surface — VS Code's `in` RHS is `_value()` (bare word _or_ quoted string). Fixed.                                                          |
+| 6   | Idempotent paren canonicalization                | **Documented**, not a bug — the `WhenClause` docstring now states the codec is a normalizer (`(a)` → `a`, bare-word RHS → quoted).                                                                            |
 
-Property test using `Arbitrary.make(WhenAstStruct)` to assert
-`decode(encode(ast)) === ast` for randomly generated ASTs. The
-schema-derived arbitrary catches encode-side holes systematically.
-Add fixture-driven decode tests against real VS Code keybinding
-clauses scraped from the marketplace's most-installed extensions.
+The property test surfaced **four holes the design doc missed**, all now
+fixed:
+
+- **Scientific notation** — `String(1e21)` is `"1e+21"`; the numeric
+  regex `-?\d+(?:\.\d+)?` didn't accept the `e` tail. VS Code uses
+  `parseFloat`, which does. Fixed — added `(?:[eE][+-]?\d+)?`.
+- **Newline in regex pattern** — `(.+)` doesn't match `\n`; VS Code's
+  scanner consumes any char up to the closing `/`. Fixed — `[\s\S]+`.
+- **`-0`** — `String(-0)` is `"0"`; negative zero can't round-trip.
+  (Property-test filter excludes it; not a meaningful clause value.)
+- **Parens inside string/regex literals** — `splitTopLevel` and
+  `stripOuterParens` counted `(`/`)` blindly, so `key == '(' && other`
+  mis-split. Fixed — both helpers now skip `'…'` and `/…/` literals via
+  `skipLiteral`. An _unterminated_ delimiter is treated as an ordinary
+  char (else a stray `'` in `WhenUnsafeRaw` text makes `WhenNot`
+  re-wrapping accrete a `(…)` layer per round-trip).
+
+### Schema tightening
+
+- `WhenMatch.flags` is now `[gimsuy]+` (was `Schema.String`) — an empty
+  or invalid flag string is unrepresentable.
+- `WhenAnd`/`WhenOr` need ≥ 2 terms. This is enforced in the **builder**
+  (`and`/`or` take `(first, second, ...rest)`), NOT the schema: a
+  `Schema.minItems(2)` filter on the recursive `terms` field breaks
+  `transformOrFail`'s encode for combinators nested in another
+  combinator. `WhenAnd.make`/`WhenOr.make` can still construct a
+  degenerate 0/1-term node; the codec doesn't round-trip it.
+
+### Tests
+
+- `tests/property.test.ts` — two properties over a hand-built
+  `arbWellFormed` arbitrary (identifier keys, quote-free values, ≥ 2-term
+  combinators, no `WhenUnsafeRaw`) plus `Arbitrary.make` for the total
+  struct codec. A custom generator, not `Arbitrary.make(...).filter(...)`:
+  the loose schema's arbitrary is mostly junk, so a filter either starves
+  generation or admits non-round-trippable ASTs.
+- `tests/fixtures.test.ts` — 16 real `when`-clauses harvested from VS
+  Code's bundled extensions; each must decode to a typed tree (no
+  `WhenUnsafeRaw`) and `re-decode` to a fixpoint.
 
 ---
 
