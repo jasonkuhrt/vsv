@@ -389,7 +389,7 @@ type role only" — still cleaner than today's "all type roles."
 
 ---
 
-## Gap 4 — typed `args`/`result` per command
+## Gap 4 — typed `args`/`result` per command **(done — see f494d6c, f512af9, f185edb, 6eb29f7)**
 
 `CommandDecl.args: Schema.Unknown` and the symmetric `ExternalCommandDecl`
 fields are the same defect on the command side. After Gap 0:
@@ -434,6 +434,65 @@ capture. The currently-documented limitation in `ExternalCommandDecl`
 ("the runtime's typed `executeCommand` only indexes `CommandRegistry`,
 not `ExternalCommandRegistry`") closes too — typed `executeCommand(id,
 args)` for external commands works through the same tuple capture.
+
+### Landing notes (post-implementation)
+
+The rewire landed in four commits across two repos:
+
+- `f494d6c` — fix factory literal capture on `ExternalCommandDecl` and
+  `StateDecl`. The earlier `5a53ff4` added `Id`/`K`/`S` slots to the
+  type aliases but forgot to update the factory function signatures,
+  so the factories always passed default `string`. Without this the
+  mapped-type Extract filters in `registries.ts` couldn't discriminate
+  on `{ readonly id: 'foo' }` etc. — `ExternalCommandArgs<M, 'list.expand'>`
+  resolved to `unknown` / `never`.
+- `f512af9` — replace the 7-generic `Runtime<CR, CKR, CFR, SR, ER, EXR, FCR>`
+  with single `Runtime<M extends AnyTypedManifest>`. `createRuntime(manifest)`
+  is the only entry point — no type-arg form anywhere. Adds
+  `ContextKeyValue<M, N>`, `ConfigValue<M, K>`, `ForeignConfigValue<M, K>`
+  extractors. Renames `ExternalCommandArgsOf` → `ExternalCommandArgs<M, Id>`
+  (consistent with `CommandArgs<M, Id>`); the in-module variadic mapper
+  is now `VariadicArgs<T>`. Drops all `*RegistryShape` types from
+  `create.ts` and the corresponding re-exports from `src/exports/runtime.ts`.
+  Migrates the 77 `createRuntime<X>()` call sites in
+  `src/lib/runtime/tests/create.test.ts` to a single shared
+  `testManifest = defineManifest({ ... })`.
+- `f185edb` — delete `src/lib/codegen/emit-registries.ts`, its test, and
+  the helper `src/lib/codegen/schema-to-ts.ts` (only used by the now-deleted
+  emitter). `runCodegen` produces only `package.json` sync; `CodegenResult`
+  drops `registriesPath`; `vsv dev` no longer prints the registries-file
+  line. Plus three tiny rewire follow-ups: `defineEvent` impl drops the
+  redundant `& string` and gets an explicit return-type annotation so K
+  appears in two signature positions; bridge-thunk cast in `defineCommand`
+  gets an `oxlint-disable` with reason; `scope === 'global'` in
+  `defineState` gets an `oxlint-disable` for `no-unnecessary-condition`
+  (oxlint can't resolve the deferred `StateScope<M, K>` mapped type and
+  falsely reports the branches as unreachable).
+- `6eb29f7` (workbench-cycler) — migrates the consumer. `.make({...})` →
+  callable factory form. `createRuntime(manifest)` instead of generics.
+  Deletes `src/generated/registries.ts`. `activate` becomes `async` so it
+  can `await Effect.runPromise` for `defineContextKey` (the initial
+  `setContext` call is Promise-typed at the VSCode boundary).
+
+### What it cost / didn't cost
+
+- 268 tests pass in vsv; full `bun run check` (format + lint + types +
+  test + publint + attw) exits 0. 6/6 tests pass in workbench-cycler.
+- Net diff across the two repos: −538 lines (mostly from deleting the
+  codegen TS-emit pipeline and the generated `*RegistryShape` types).
+- No compat shims, no `@ts-expect-error`, no temporary fallbacks. The
+  earlier session's "deferred Gap 4" landing didn't survive contact with
+  the work — the foundation bug (factories not capturing literals) had
+  to be fixed before the rewire could even compile cleanly.
+
+### What's still open
+
+- `EventDecl` is the one decl still missing from the manifest. Today
+  `EventRegistryOf<_M>` is a permissive `Record<string, unknown>` —
+  `defineEvent('x')` accepts any string and yields `EventHandle<unknown>`.
+  Adding `EventDecl` follows the same pattern as `ContextKeyDecl` (single
+  factory file, `<const Name extends string>` for literal capture,
+  mapped type in `registries.ts`).
 
 ---
 
