@@ -1,7 +1,8 @@
-// Type-level tests for `defineManifest` — the `<const M>` tuple capture that
-// the whole runtime/builder typing rests on. If a decl factory fails to
-// capture its identifying literal, every downstream extractor degrades; this
-// file is the regression fence for that foundation.
+// Type-level tests for `defineManifest` — Surface B. The `<const M>` tuple
+// capture is the foundation the whole runtime/builder typing rests on: if a
+// decl factory fails to capture its literal, or the tuple widens to
+// `ReadonlyArray`, every downstream extractor degrades. This file is the
+// regression fence for that foundation.
 
 import { Schema } from 'effect'
 import { describe, expectTypeOf, test } from 'vitest'
@@ -13,6 +14,11 @@ import { ExternalContextKeyDecl } from '#lib/manifest/decls/external-context-key
 import { ForeignConfigDecl } from '#lib/manifest/decls/foreign-config'
 import { StateDecl } from '#lib/manifest/decls/state'
 import { defineManifest } from '#lib/manifest/define'
+import type {
+  CommandRegistryOf,
+  ContextKeyRegistryOf,
+  StateRegistryOf,
+} from '#lib/runtime/registries'
 
 const m = defineManifest({
   name: 'x',
@@ -35,14 +41,28 @@ describe('TypedManifest', () => {
   test('adds the Manifest discriminator', () => {
     expectTypeOf<M['_tag']>().toEqualTypeOf<'Manifest'>()
   })
+})
 
-  test('preserves the decl arrays as tuples — a literal-length, not ReadonlyArray', () => {
-    // A tuple has a numeric-literal `length`; a widened array has `number`.
+describe('tuple capture', () => {
+  test('decl arrays are fixed-length tuples, not widened ReadonlyArrays', () => {
+    // A tuple has a numeric-literal `length`; a widened `ReadonlyArray` has
+    // `number`. This is the fixture's own canary — if `<const M>` capture
+    // regresses, downstream cases would pass vacuously against widened types.
     expectTypeOf<M['commands']['length']>().toEqualTypeOf<2>()
+    expectTypeOf<M['externalCommands']['length']>().toEqualTypeOf<1>()
+    expectTypeOf<M['contextKeys']['length']>().toEqualTypeOf<1>()
+  })
+
+  test('each tuple element keeps its own captured generics', () => {
+    // Element 0 and element 1 are distinct decls — neither the widened
+    // default nor each other.
+    expectTypeOf<M['commands'][0]['args']>().toEqualTypeOf<typeof Schema.String>()
+    expectTypeOf<M['commands'][1]['args']>().toEqualTypeOf<typeof Schema.Number>()
+    expectTypeOf<M['commands'][0]['args']>().not.toEqualTypeOf<M['commands'][1]['args']>()
   })
 })
 
-describe('decl factory literal capture', () => {
+describe('decl factory literal capture (through defineManifest)', () => {
   test('CommandDecl captures the id literal', () => {
     expectTypeOf<M['commands'][0]['id']>().toEqualTypeOf<'cmd1'>()
     expectTypeOf<M['commands'][1]['id']>().toEqualTypeOf<'cmd2'>()
@@ -65,5 +85,16 @@ describe('decl factory literal capture', () => {
   test('StateDecl captures the key and scope literals', () => {
     expectTypeOf<M['state'][0]['key']>().toEqualTypeOf<'st1'>()
     expectTypeOf<M['state'][0]['scope']>().toEqualTypeOf<'workspace'>()
+  })
+})
+
+describe('omitted decl arrays', () => {
+  const empty = defineManifest({ name: 'e', publisher: 'p' })
+  type E = typeof empty
+
+  test('a manifest omitting a decl array yields an empty registry — no keys, no crash', () => {
+    expectTypeOf<keyof CommandRegistryOf<E>>().toBeNever()
+    expectTypeOf<keyof ContextKeyRegistryOf<E>>().toBeNever()
+    expectTypeOf<keyof StateRegistryOf<E>>().toBeNever()
   })
 })

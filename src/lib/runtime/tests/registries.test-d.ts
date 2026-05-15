@@ -62,6 +62,8 @@ const m = defineManifest({
   contextKeys: [
     ContextKeyDecl({ name: 'ck.bool', valueType: Schema.Boolean }),
     ContextKeyDecl({ name: 'ck.enum', valueType: Schema.Literal('a', 'b') }),
+    ContextKeyDecl({ name: 'ck.single', valueType: Schema.Literal('only') }),
+    ContextKeyDecl({ name: 'ck.num', valueType: Schema.Number }),
   ],
   externalContextKeys: [
     ExternalContextKeyDecl({ name: 'eck.str', valueType: Schema.String }),
@@ -78,6 +80,19 @@ const m = defineManifest({
 })
 
 type M = typeof m
+
+// ─── Fixture canary ──────────────────────────────────────────────────────
+// If `<const M>` capture regresses, the fixture's decl arrays widen to
+// `ReadonlyArray` and every extractor below would resolve against widened
+// types — passing vacuously. This asserts the fixture itself is sound.
+
+describe('fixture', () => {
+  test('decl arrays are captured as fixed-length tuples', () => {
+    expectTypeOf<M['commands']['length']>().toEqualTypeOf<2>()
+    expectTypeOf<M['contextKeys']['length']>().toEqualTypeOf<4>()
+    expectTypeOf<M['state']['length']>().toEqualTypeOf<2>()
+  })
+})
 
 // ─── CommandRegistryOf ───────────────────────────────────────────────────
 
@@ -120,7 +135,7 @@ describe('ExternalCommandRegistryOf', () => {
 describe('ContextKeyRegistryOf', () => {
   test('keys merge owned + external context-key names', () => {
     expectTypeOf<keyof ContextKeyRegistryOf<M>>().toEqualTypeOf<
-      'ck.bool' | 'ck.enum' | 'eck.str' | 'eck.merged'
+      'ck.bool' | 'ck.enum' | 'ck.single' | 'ck.num' | 'eck.str' | 'eck.merged'
     >()
   })
 
@@ -133,6 +148,11 @@ describe('ContextKeyRegistryOf', () => {
 
   test('same-named decls merge into the value union', () => {
     expectTypeOf<ContextKeyRegistryOf<M>['eck.merged']>().toEqualTypeOf<'x' | 'y'>()
+  })
+
+  test('an undeclared key is not in the registry', () => {
+    // @ts-expect-error -- 'ck.undeclared' was never declared in the manifest
+    type _Absent = ContextKeyRegistryOf<M>['ck.undeclared']
   })
 })
 
@@ -232,14 +252,35 @@ describe('StateScope', () => {
 // ─── ContextKeyValue ─────────────────────────────────────────────────────
 
 describe('ContextKeyValue', () => {
-  test('extracts decoded value for a context key — not any', () => {
+  // The five value-domain shapes the codec must keep narrow. Each gets a
+  // `.not.toBeAny()` — the guard whose absence let the original bug ship.
+  test('boolean', () => {
     expectTypeOf<ContextKeyValue<M, 'ck.bool'>>().not.toBeAny()
     expectTypeOf<ContextKeyValue<M, 'ck.bool'>>().toEqualTypeOf<boolean>()
+  })
+
+  test('single string literal', () => {
+    expectTypeOf<ContextKeyValue<M, 'ck.single'>>().not.toBeAny()
+    expectTypeOf<ContextKeyValue<M, 'ck.single'>>().toEqualTypeOf<'only'>()
+  })
+
+  test('string-literal union', () => {
+    expectTypeOf<ContextKeyValue<M, 'ck.enum'>>().not.toBeAny()
     expectTypeOf<ContextKeyValue<M, 'ck.enum'>>().toEqualTypeOf<'a' | 'b'>()
+  })
+
+  test('open string', () => {
+    expectTypeOf<ContextKeyValue<M, 'eck.str'>>().not.toBeAny()
     expectTypeOf<ContextKeyValue<M, 'eck.str'>>().toEqualTypeOf<string>()
   })
 
+  test('number', () => {
+    expectTypeOf<ContextKeyValue<M, 'ck.num'>>().not.toBeAny()
+    expectTypeOf<ContextKeyValue<M, 'ck.num'>>().toEqualTypeOf<number>()
+  })
+
   test('merges same-named decls into the value union', () => {
+    expectTypeOf<ContextKeyValue<M, 'eck.merged'>>().not.toBeAny()
     expectTypeOf<ContextKeyValue<M, 'eck.merged'>>().toEqualTypeOf<'x' | 'y'>()
   })
 })
