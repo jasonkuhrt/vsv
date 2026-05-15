@@ -20,7 +20,7 @@ const manifest = defineManifest({
     }),
     ExternalContextKeyDecl({ name: 'inputFocus', valueType: Schema.Boolean }),
     ExternalContextKeyDecl({ name: 'editorLangId', valueType: Schema.String }),
-    // Two decls, same name, different literal — `ContextKeyValueOf` merges
+    // Two decls, same name, different literal — `ContextKeyValue` merges
     // them into the union `'bottom' | 'right'` (design Gap 3).
     ExternalContextKeyDecl({ name: 'panelPosition', valueType: Schema.Literal('bottom') }),
     ExternalContextKeyDecl({ name: 'panelPosition', valueType: Schema.Literal('right') }),

@@ -499,6 +499,25 @@ The rewire landed in four commits across two repos:
   the work — the foundation bug (factories not capturing literals) had
   to be fixed before the rewire could even compile cleanly.
 
+### Follow-up — the rewire's `any` leak (fixed)
+
+The Gap 4 rewire shipped with `bun run check` green, but green was
+shallow: `tsgo` proved the types _compile_, not that they're _narrow_.
+`ContextKeyValue` and `ContextKeyRegistryOf` collapsed to `any` —
+`defineContextKey().get()` yielded `any`, and that leaked into
+workbench-cycler (two `no-unsafe-*` lint errors). Root cause: the
+`Extract<…, { name: N }> extends ContextKeyDecl<infer V, N>` shape
+filters then matches with `N` fixed; `infer V` fails and falls back to
+its constraint `Schema.Schema.AnyNoContext`, whose decoded type is `any`.
+
+Fixed by extracting context-key value typing into a single shared type,
+`manifest/context-key-value.ts`, using the distributive
+`ReadonlyArray<infer D>` pattern the `When` builder already proved — and
+adding a type-level test suite (`*.test-d.ts`, run by `vitest --typecheck`
+via `check:types-d`) that asserts every extractor's exact output with
+`.not.toBeAny()` guards. The lesson: a typed library needs type-level
+tests; runtime tests pass through `any` silently.
+
 ### What's still open
 
 - `EventDecl` is the one decl still missing from the manifest. Today

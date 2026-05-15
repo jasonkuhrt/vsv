@@ -58,10 +58,11 @@
     "fix": "bun run fix:format && bun run fix:lint",
     "fix:format": "oxfmt --write",
     "fix:lint": "oxlint --type-aware --fix-dangerously --deny-warnings",
-    "check": "bun run check:format && bun run check:lint && bun run check:types && bun run test && bun run check:package && bun run check:exports",
+    "check": "bun run check:format && bun run check:lint && bun run check:types && bun run check:types-d && bun run test && bun run check:package && bun run check:exports",
     "check:format": "oxfmt --check",
     "check:lint": "oxlint --type-aware --deny-warnings",
     "check:types": "tsgo",
+    "check:types-d": "vitest run --typecheck",
     "check:package": "publint run --strict",
     "check:exports": "attw --pack . --profile esm-only"
   },
@@ -82,6 +83,7 @@
     "oxlint-tsgolint": "^0.16.0",
     "publint": "^0.3.18",
     "tsx": "^4.19.2",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "^4.1.6"
   }
 }

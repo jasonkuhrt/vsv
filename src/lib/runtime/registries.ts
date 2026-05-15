@@ -5,14 +5,18 @@
 // `defineManifest<const M>`.
 
 import type { Schema } from 'effect'
+import type { ContextKeyValue } from '#lib/manifest/context-key-value'
 import type { CommandDecl } from '#lib/manifest/decls/command'
 import type { ConfigDecl } from '#lib/manifest/decls/config'
-import type { ContextKeyDecl } from '#lib/manifest/decls/context-key'
 import type { ExternalCommandDecl } from '#lib/manifest/decls/external-command'
-import type { ExternalContextKeyDecl } from '#lib/manifest/decls/external-context-key'
 import type { ForeignConfigDecl } from '#lib/manifest/decls/foreign-config'
 import type { StateDecl } from '#lib/manifest/decls/state'
 import type { TypedManifest } from '#lib/manifest/define'
+
+// Context-key value extraction is shared with the `When` builder — see
+// `manifest/context-key-value.ts`. Re-exported so the runtime surface keeps
+// `ContextKeyValue` importable from `./registries`.
+export type { ContextKeyValue }
 
 /** Extract the decoded TypeScript type of an Effect Schema, falling back to `unknown`. */
 type TypeOf<S> = S extends Schema.Schema.AnyNoContext ? Schema.Schema.Type<S> : unknown
@@ -71,25 +75,13 @@ export type ExternalCommandRegistryOf<M> = {
 
 /**
  * Merged registry of context keys — owned (`contextKeys`) and consumed
- * (`externalContextKeys`). When two decls share a `name`, their value
- * types are unioned at the entry.
+ * (`externalContextKeys`). Each entry's value type comes from the shared
+ * `ContextKeyValue` extractor, which unions same-named decls.
  */
 export type ContextKeyRegistryOf<M> = {
   readonly [N in
     | NameOf<Tuple<M, 'contextKeys'>[number]>
-    | NameOf<Tuple<M, 'externalContextKeys'>[number]>]:
-    | (Extract<Tuple<M, 'contextKeys'>[number], { readonly name: N }> extends ContextKeyDecl<
-        infer V,
-        N
-      >
-        ? TypeOf<V>
-        : never)
-    | (Extract<
-        Tuple<M, 'externalContextKeys'>[number],
-        { readonly name: N }
-      > extends ExternalContextKeyDecl<infer V, N>
-        ? TypeOf<V>
-        : never)
+    | NameOf<Tuple<M, 'externalContextKeys'>[number]>]: ContextKeyValue<M, N>
 }
 
 /** Registry of configuration settings contributed by the extension. */
@@ -168,21 +160,6 @@ export type StateValue<M, K> =
   StateDeclForKey<M, K> extends StateDecl<infer V> ? TypeOf<V> : unknown
 export type StateScope<M, K> =
   StateDeclForKey<M, K> extends { readonly scope: infer S } ? S : 'global' | 'workspace'
-
-/** Value type of a context key — merges owned + external. */
-export type ContextKeyValue<M, N extends string> =
-  | (Extract<Tuple<M, 'contextKeys'>[number], { readonly name: N }> extends ContextKeyDecl<
-      infer V,
-      N
-    >
-      ? TypeOf<V>
-      : never)
-  | (Extract<
-      Tuple<M, 'externalContextKeys'>[number],
-      { readonly name: N }
-    > extends ExternalContextKeyDecl<infer V, N>
-      ? TypeOf<V>
-      : never)
 
 /** Value type of an extension-owned configuration setting. */
 export type ConfigValue<M, K> =

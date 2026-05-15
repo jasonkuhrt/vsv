@@ -5,16 +5,16 @@
 //
 // Value-domain narrowing: each key's declared `valueType` Schema decodes to
 // a TypeScript type, merged across every decl that shares the key's name
-// (`ContextKeyValueOf`). `eq`/`neq` narrow their `value` argument to that
+// (`ContextKeyValue`). `eq`/`neq` narrow their `value` argument to that
 // domain; `match` is offered only for open-`string` keys; `lt`/`lte`/`gt`/
 // `gte` only for numeric keys. The constraint lives on each operator's `key`
 // parameter — a flat-method surface, consistent with the runtime's
 // `defineCommand(id, args)`.
 
+import type { ContextKeyValue } from '#lib/manifest/context-key-value'
 import type { ContextKeyDecl } from '#lib/manifest/decls/context-key'
 import type { ExternalContextKeyDecl } from '#lib/manifest/decls/external-context-key'
 import type { TypedManifest } from '#lib/manifest/define'
-import type { Schema } from 'effect'
 import {
   WhenAnd,
   type WhenAst,
@@ -50,31 +50,10 @@ export type ContextKeyName<M> =
             : never)
     : never
 
-/**
- * Decoded value domain of a context key `N` — the union of every decl's
- * `Schema.Type<valueType>` across `contextKeys` + `externalContextKeys`.
- * When two sub-plugins each declare `activeCustomEditorId` with a different
- * `Schema.Literal`, this is their union: the merge (design Gap 3) is a
- * mapped type over the manifest tuple, no codegen.
- *
- * Mirrors `ContextKeyValue` in `runtime/registries.ts`; it is duplicated
- * here because `when/` may not import from `runtime/` (the import-direction
- * invariant — runtime sits downstream of when).
- */
-export type ContextKeyValueOf<M, N extends string> =
-  M extends TypedManifest<infer Spec>
-    ?
-        | (Spec['contextKeys'] extends ReadonlyArray<infer D>
-            ? D extends ContextKeyDecl<infer V, N>
-              ? Schema.Schema.Type<V>
-              : never
-            : never)
-        | (Spec['externalContextKeys'] extends ReadonlyArray<infer D>
-            ? D extends ExternalContextKeyDecl<infer V, N>
-              ? Schema.Schema.Type<V>
-              : never
-            : never)
-    : never
+// The context-key value-domain extractor lives in `manifest/` — shared with
+// the runtime registry types. Re-exported here so `When` builder consumers
+// can name the value type without reaching across modules.
+export type { ContextKeyValue }
 
 /**
  * Context-key names whose merged value domain is numeric — open `number` or
@@ -82,7 +61,7 @@ export type ContextKeyValueOf<M, N extends string> =
  * accept only these.
  */
 export type NumericKeyName<M> = {
-  readonly [N in ContextKeyName<M> & string]: [ContextKeyValueOf<M, N>] extends [number] ? N : never
+  readonly [N in ContextKeyName<M> & string]: [ContextKeyValue<M, N>] extends [number] ? N : never
 }[ContextKeyName<M> & string]
 
 /**
@@ -91,7 +70,7 @@ export type NumericKeyName<M> = {
  * matching a key already pinned to a literal union is meaningless.
  */
 export type OpenStringKeyName<M> = {
-  readonly [N in ContextKeyName<M> & string]: [string] extends [ContextKeyValueOf<M, N>] ? N : never
+  readonly [N in ContextKeyName<M> & string]: [string] extends [ContextKeyValue<M, N>] ? N : never
 }[ContextKeyName<M> & string]
 
 /**
@@ -109,18 +88,18 @@ export interface WhenBuilder<M> {
 
   /**
    * Equality atom — `key == value`. The `value` argument is narrowed to the
-   * key's declared value domain (`ContextKeyValueOf`): a boolean key accepts
+   * key's declared value domain (`ContextKeyValue`): a boolean key accepts
    * `boolean`, a `Schema.Literal('a', 'b')` key accepts `'a' | 'b'`.
    */
   readonly eq: <K extends ContextKeyName<M> & string>(
     key: K,
-    value: ContextKeyValueOf<M, K>,
+    value: ContextKeyValue<M, K>,
   ) => WhenAst
 
   /** Inequality atom — `key != value`. Value narrowed as in `eq`. */
   readonly neq: <K extends ContextKeyName<M> & string>(
     key: K,
-    value: ContextKeyValueOf<M, K>,
+    value: ContextKeyValue<M, K>,
   ) => WhenAst
 
   /**
@@ -213,7 +192,7 @@ export const When = <
 ): WhenBuilder<M> => ({
   is: (key) => WhenBoolKey.make({ key }),
   eq: (key, value) =>
-    // The value is narrowed to `ContextKeyValueOf<M, K>` at the call site;
+    // The value is narrowed to `ContextKeyValue<M, K>` at the call site;
     // `WhenEq` only accepts the `string | number | boolean` primitive union.
     // Context-key value domains are always primitive in practice, but the
     // schema doesn't enforce that, so the assertion lives at this boundary.
