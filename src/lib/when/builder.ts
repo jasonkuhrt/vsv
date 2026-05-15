@@ -3,23 +3,26 @@
 // `contextKeys` + `externalContextKeys` tuples, so a typo is a compile
 // error.
 //
-// MVP surface: combinators (`and`, `or`, `not`), the boolean atom `is(key)`,
-// the value-comparison atom `eq(key, value)`, and a structured-but-untyped
-// escape hatch `unsafe.raw(text)`. Value-domain narrowing (boolean → only
-// `is`; string-literal → typed `eq` value union; numeric → comparison
-// operators) is the next slice — it requires a mapped type that
-// discriminates on each declared `valueType`'s Schema AST node. The
-// builder's runtime behaviour is final; only its type-level surface
-// tightens in that follow-up.
+// Value-domain narrowing: each key's declared `valueType` Schema decodes to
+// a TypeScript type, merged across every decl that shares the key's name
+// (`ContextKeyValueOf`). `eq`/`neq` narrow their `value` argument to that
+// domain; `match` is offered only for open-`string` keys; `lt`/`lte`/`gt`/
+// `gte` only for numeric keys. The constraint lives on each operator's `key`
+// parameter — a flat-method surface, consistent with the runtime's
+// `defineCommand(id, args)`.
 
 import type { ContextKeyDecl } from '#lib/manifest/decls/context-key'
 import type { ExternalContextKeyDecl } from '#lib/manifest/decls/external-context-key'
 import type { TypedManifest } from '#lib/manifest/define'
+import type { Schema } from 'effect'
 import {
   WhenAnd,
   type WhenAst,
   WhenBoolKey,
+  WhenCmp,
   WhenEq,
+  WhenIn,
+  WhenMatch,
   WhenNeq,
   WhenNot,
   WhenOr,
@@ -48,6 +51,50 @@ export type ContextKeyName<M> =
     : never
 
 /**
+ * Decoded value domain of a context key `N` — the union of every decl's
+ * `Schema.Type<valueType>` across `contextKeys` + `externalContextKeys`.
+ * When two sub-plugins each declare `activeCustomEditorId` with a different
+ * `Schema.Literal`, this is their union: the merge (design Gap 3) is a
+ * mapped type over the manifest tuple, no codegen.
+ *
+ * Mirrors `ContextKeyValue` in `runtime/registries.ts`; it is duplicated
+ * here because `when/` may not import from `runtime/` (the import-direction
+ * invariant — runtime sits downstream of when).
+ */
+export type ContextKeyValueOf<M, N extends string> =
+  M extends TypedManifest<infer Spec>
+    ?
+        | (Spec['contextKeys'] extends ReadonlyArray<infer D>
+            ? D extends ContextKeyDecl<infer V, N>
+              ? Schema.Schema.Type<V>
+              : never
+            : never)
+        | (Spec['externalContextKeys'] extends ReadonlyArray<infer D>
+            ? D extends ExternalContextKeyDecl<infer V, N>
+              ? Schema.Schema.Type<V>
+              : never
+            : never)
+    : never
+
+/**
+ * Context-key names whose merged value domain is numeric — open `number` or
+ * a numeric literal union. The comparison operators (`lt`/`lte`/`gt`/`gte`)
+ * accept only these.
+ */
+export type NumericKeyName<M> = {
+  readonly [N in ContextKeyName<M> & string]: [ContextKeyValueOf<M, N>] extends [number] ? N : never
+}[ContextKeyName<M> & string]
+
+/**
+ * Context-key names whose merged value domain is the open `string` type —
+ * not a closed literal enum. `match` (regex) accepts only these: regex-
+ * matching a key already pinned to a literal union is meaningless.
+ */
+export type OpenStringKeyName<M> = {
+  readonly [N in ContextKeyName<M> & string]: [string] extends [ContextKeyValueOf<M, N>] ? N : never
+}[ContextKeyName<M> & string]
+
+/**
  * The typed `When` builder produced by `When(manifest)`. Methods produce
  * `WhenAst` nodes — never strings. Encoding to VS Code's when-clause
  * syntax happens via `Schema.encodeSync(WhenClause)(ast)` at the
@@ -55,21 +102,48 @@ export type ContextKeyName<M> =
  */
 export interface WhenBuilder<M> {
   /**
-   * Boolean atom — `key`. Compiles to `WhenBoolKey({ key })`. Use for
-   * keys whose `valueType` is `Schema.Boolean` (or as the bare-key form
-   * for value-keyed contexts when no value comparison is needed).
+   * Boolean atom — `key`. Compiles to `WhenBoolKey({ key })`. Accepts any
+   * declared key: a bare-key reference reads the key's truthiness.
    */
   readonly is: (key: ContextKeyName<M>) => WhenAst
 
   /**
-   * Equality atom — `key == value`. Compiles to `WhenEq({ key, value })`.
-   * Value-type narrowing per declared `valueType` is a follow-up; today
-   * `value` accepts `string | number | boolean`.
+   * Equality atom — `key == value`. The `value` argument is narrowed to the
+   * key's declared value domain (`ContextKeyValueOf`): a boolean key accepts
+   * `boolean`, a `Schema.Literal('a', 'b')` key accepts `'a' | 'b'`.
    */
-  readonly eq: (key: ContextKeyName<M>, value: string | number | boolean) => WhenAst
+  readonly eq: <K extends ContextKeyName<M> & string>(
+    key: K,
+    value: ContextKeyValueOf<M, K>,
+  ) => WhenAst
 
-  /** Inequality atom — `key != value`. */
-  readonly neq: (key: ContextKeyName<M>, value: string | number | boolean) => WhenAst
+  /** Inequality atom — `key != value`. Value narrowed as in `eq`. */
+  readonly neq: <K extends ContextKeyName<M> & string>(
+    key: K,
+    value: ContextKeyValueOf<M, K>,
+  ) => WhenAst
+
+  /**
+   * Regex-match atom — `key =~ /pattern/flags`. Offered only for keys whose
+   * value domain is the open `string` type; a closed literal-enum key has
+   * nothing to regex-match.
+   */
+  readonly match: (key: OpenStringKeyName<M>, pattern: string, flags?: string) => WhenAst
+
+  /** Less-than comparison — `key < value`. Numeric keys only. */
+  readonly lt: (key: NumericKeyName<M>, value: number) => WhenAst
+  /** Less-than-or-equal comparison — `key <= value`. Numeric keys only. */
+  readonly lte: (key: NumericKeyName<M>, value: number) => WhenAst
+  /** Greater-than comparison — `key > value`. Numeric keys only. */
+  readonly gt: (key: NumericKeyName<M>, value: number) => WhenAst
+  /** Greater-than-or-equal comparison — `key >= value`. Numeric keys only. */
+  readonly gte: (key: NumericKeyName<M>, value: number) => WhenAst
+
+  /**
+   * Set-membership atom — `key in set`. Both arguments are declared context
+   * keys; `set` names a key whose value is the collection being tested.
+   */
+  readonly in: (key: ContextKeyName<M>, set: ContextKeyName<M>) => WhenAst
 
   /** Negation — `!(inner)`. */
   readonly not: (inner: WhenAst) => WhenAst
@@ -100,8 +174,9 @@ export interface WhenBuilder<M> {
 
 /**
  * Construct a manifest-typed `When` builder. The manifest's declared
- * context keys (owned + external) constrain `is`/`eq`/`neq` to legal
- * key names.
+ * context keys (owned + external) constrain `is`/`eq`/`neq`/… to legal
+ * key names, and each key's declared `valueType` narrows the value
+ * arguments.
  *
  * @example
  * ```ts
@@ -137,8 +212,23 @@ export const When = <
   _manifest: M,
 ): WhenBuilder<M> => ({
   is: (key) => WhenBoolKey.make({ key }),
-  eq: (key, value) => WhenEq.make({ key, value }),
-  neq: (key, value) => WhenNeq.make({ key, value }),
+  eq: (key, value) =>
+    // The value is narrowed to `ContextKeyValueOf<M, K>` at the call site;
+    // `WhenEq` only accepts the `string | number | boolean` primitive union.
+    // Context-key value domains are always primitive in practice, but the
+    // schema doesn't enforce that, so the assertion lives at this boundary.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- see above
+    WhenEq.make({ key, value: value as string | number | boolean }),
+  neq: (key, value) =>
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- see `eq` above
+    WhenNeq.make({ key, value: value as string | number | boolean }),
+  match: (key, pattern, flags) =>
+    WhenMatch.make(flags === undefined ? { key, pattern } : { key, pattern, flags }),
+  lt: (key, value) => WhenCmp.make({ key, op: '<', value }),
+  lte: (key, value) => WhenCmp.make({ key, op: '<=', value }),
+  gt: (key, value) => WhenCmp.make({ key, op: '>', value }),
+  gte: (key, value) => WhenCmp.make({ key, op: '>=', value }),
+  in: (key, set) => WhenIn.make({ key, set }),
   not: (inner) => WhenNot.make({ inner }),
   and: (first, second, ...rest) => WhenAnd.make({ terms: [first, second, ...rest] }),
   or: (first, second, ...rest) => WhenOr.make({ terms: [first, second, ...rest] }),

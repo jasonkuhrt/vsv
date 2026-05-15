@@ -109,35 +109,62 @@ Constructs a manifest-typed authoring API. The manifest's declared
 context keys (owned via `contextKeys`, consumed via
 `externalContextKeys`) constrain key-name arguments at compile time.
 
-| Method               | Produces        | Notes                                               |
-| -------------------- | --------------- | --------------------------------------------------- |
-| `$.is(key)`          | `WhenBoolKey`   | Key must be declared in the manifest                |
-| `$.eq(key, value)`   | `WhenEq`        | Same — value is `string \| number \| boolean` today |
-| `$.neq(key, value)`  | `WhenNeq`       | Same                                                |
-| `$.not(inner)`       | `WhenNot`       | Wraps any `WhenAst`                                 |
-| `$.and(a, b, …)`     | `WhenAnd`       | Conjunction — requires at least two terms           |
-| `$.or(a, b, …)`      | `WhenOr`        | Disjunction — requires at least two terms           |
-| `$.unsafe.raw(text)` | `WhenUnsafeRaw` | Escape hatch — survives encoding verbatim, no parse |
+| Method                         | Produces        | Key domain  | Notes                                         |
+| ------------------------------ | --------------- | ----------- | --------------------------------------------- |
+| `$.is(key)`                    | `WhenBoolKey`   | any         | Bare-key truthiness reference                 |
+| `$.eq(key, value)`             | `WhenEq`        | any         | `value` narrowed to the key's declared domain |
+| `$.neq(key, value)`            | `WhenNeq`       | any         | `value` narrowed as in `eq`                   |
+| `$.match(key, pattern, flag?)` | `WhenMatch`     | open string | Regex match — only keys typed `Schema.String` |
+| `$.lt` / `lte` / `gt` / `gte`  | `WhenCmp`       | numeric     | `key < n` etc. — only numeric-valued keys     |
+| `$.in(key, set)`               | `WhenIn`        | any         | `key in set` — both are declared context keys |
+| `$.not(inner)`                 | `WhenNot`       | —           | Wraps any `WhenAst`                           |
+| `$.and(a, b, …)`               | `WhenAnd`       | —           | Conjunction — requires at least two terms     |
+| `$.or(a, b, …)`                | `WhenOr`        | —           | Disjunction — requires at least two terms     |
+| `$.unsafe.raw(text)`           | `WhenUnsafeRaw` | —           | Escape hatch — encoded verbatim, no parse     |
 
 `and`/`or` take `(first, second, ...rest)` — a one-term conjunction is just
 the term itself, so the typed signature rejects it. (`WhenAnd.make` /
 `WhenOr.make` can still construct a degenerate 0/1-term node directly; the
 codec doesn't round-trip one.)
 
-A typo on a context-key name is a compile error:
+### Value-domain narrowing
+
+Each context key's declared `valueType` Schema decodes to a TypeScript type;
+that type is what `eq`/`neq` accept, and it's what gates the domain-specific
+operators. The "Key domain" column above is enforced on each operator's
+`key` argument:
 
 ```ts
 const $ = When(manifest)
+
+$.eq('ext.ready', true) // ✓ boolean key, boolean value
+// @ts-expect-error -- 'ext.ready' is boolean; a string is not in its domain
+$.eq('ext.ready', 'yes')
+
+$.match('editorLangId', 'md') // ✓ editorLangId is Schema.String
+// @ts-expect-error -- 'ext.ready' is boolean, not an open-string key
+$.match('ext.ready', 'md')
+
+$.gt('ext.lineCount', 10) // ✓ ext.lineCount is Schema.Number
+// @ts-expect-error -- 'editorLangId' is a string key, not numeric
+$.gt('editorLangId', 10)
+```
+
+A typo on a context-key name is likewise a compile error:
+
+```ts
 // @ts-expect-error -- 'redy' is not declared
 $.is('ext.redy')
 ```
 
-Value-domain narrowing (boolean keys accept only `is`; closed-enum keys
-narrow `eq`'s value to the declared literal union; numeric keys get
-comparison operators) is the next slice. Today, `eq`/`neq` accept
-`string | number | boolean` for any declared key — runtime correctness
-holds, but TypeScript can't yet stop you from passing a string to a
-boolean-typed key.
+### Domain merging
+
+When two decls — across `contextKeys` and `externalContextKeys` — share a
+key name, the key's value domain is the **union** of their declared types.
+A `vsv-markdown` sub-plugin and a `vsv-audio` sub-plugin can each declare
+`activeCustomEditorId` with their own `Schema.Literal`, and
+`$.eq('activeCustomEditorId', …)` accepts either literal. The merge is a
+mapped type over the manifest tuple — no codegen.
 
 ## Grammar coverage
 

@@ -312,7 +312,7 @@ if codegen retains a cross-decl role (see Gap 3).
 
 ---
 
-## Gap 2 — value-domain semantics derived from Schema shape
+## Gap 2 — value-domain semantics derived from Schema shape **(done)**
 
 Once `valueType` is typed via the factory generic (Gap 0) and the
 manifest preserves it via `<const M>` (Gap 0.5), the _shape_ of the
@@ -336,7 +336,7 @@ needs.
 
 ---
 
-## Gap 3 — value-domain merging across declarations
+## Gap 3 — value-domain merging across declarations **(done)**
 
 The load-bearing first-principles decision. Multiple decl sites can
 contribute values to the same context key:
@@ -376,6 +376,32 @@ not a new mechanism. Codegen stays demoted to side-effect artifacts only
 If type-checker latency ever becomes a measured problem on a real
 consumer, strategy B (codegen-emitted pre-merged unions) is the fallback —
 but that is a reaction to evidence, not a gate on landing A.
+
+### Landing notes (post-implementation)
+
+Gaps 2 and 3 landed together in the `When` builder (`src/lib/when/builder.ts`):
+
+- **Classification is by decoded type, not Schema AST node.** The doc's
+  table imagined matching `BooleanKeyword` / `Literal` / `StringKeyword`
+  AST nodes via `SchemaAST.is*`. The shipped approach is simpler: decode
+  the `valueType` to its TypeScript type (`Schema.Schema.Type<V>`) and
+  test _that_ — `[value] extends [number]` for the numeric domain,
+  `[string] extends [value]` to separate open `string` from a closed
+  literal enum. No runtime AST walk; the classification is purely
+  type-level (`NumericKeyName<M>`, `OpenStringKeyName<M>`).
+- **Merge (Gap 3) was already done.** `ContextKeyValueOf<M, N>` unions
+  `Schema.Type<valueType>` across every `contextKeys` + `externalContextKeys`
+  decl sharing the name `N` — the strategy-A mapped type. (The runtime's
+  `ContextKeyValue<M, N>` in `registries.ts` is the same type; `builder.ts`
+  carries its own copy because `when/` may not import from `runtime/`.)
+- **Operator gating lives on the `key` parameter**, a flat-method surface
+  (`$.match(key, …)`, `$.gt(key, n)`) consistent with the runtime's
+  `defineCommand(id, args)` — not a per-key sub-builder. `eq`/`neq` accept
+  any key with the value narrowed; `match` accepts only `OpenStringKeyName`;
+  `lt`/`lte`/`gt`/`gte` only `NumericKeyName`.
+
+`docs/when.md`'s builder table and the `builder.test.ts` `@ts-expect-error`
+assertions cover the narrowing and gating.
 
 ## Gap 4 — typed `args`/`result` per command **(done — see f494d6c, f512af9, f185edb, 6eb29f7)**
 
