@@ -621,7 +621,7 @@ export interface Runtime<M extends AnyTypedManifest = AnyTypedManifest> {
   ) => Effect.Effect<ConfigHandle<ForeignConfigValue<M, K>>>
 
   /** Define a custom event emitter. */
-  defineEvent: <K extends keyof EventRegistryOf<M> & string>(
+  defineEvent: <K extends keyof EventRegistryOf<M>>(
     key: K,
   ) => Effect.Effect<EventHandle<EventRegistryOf<M>[K]>>
 
@@ -773,6 +773,7 @@ export const createRuntime = <M extends AnyTypedManifest = AnyTypedManifest>(
         // which materializes the cause as a throwable.
         throw failure._tag === 'Some' ? failure.value : Cause.squash(exit.cause)
       }
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- vscode.commands.registerCommand takes a variadic `(...args: unknown[]) => unknown`; the thunk above is typed against the registry's specific Id, so the cast bridges the typed handler into VSCode's untyped surface.
       return vscode.commands.registerCommand(id, thunk as (...args: unknown[]) => unknown)
     }),
 
@@ -938,7 +939,9 @@ export const createRuntime = <M extends AnyTypedManifest = AnyTypedManifest>(
       }
     }),
 
-  defineEvent: <K extends keyof EventRegistryOf<M> & string>(_key: K) =>
+  defineEvent: <K extends keyof EventRegistryOf<M>>(
+    _key: K,
+  ): Effect.Effect<EventHandle<EventRegistryOf<M>[K]>> =>
     Effect.sync(() => {
       type V = EventRegistryOf<M>[K]
       const emitter = new vscode.EventEmitter<V>()
@@ -962,6 +965,7 @@ export const createRuntime = <M extends AnyTypedManifest = AnyTypedManifest>(
     scope: StateScope<M, K>,
   ) =>
     Effect.sync(() => {
+      // oxlint-disable-next-line typescript-eslint/no-unnecessary-condition -- `StateScope<M, K>` is a deferred mapped type the lint engine can't resolve; both branches are reachable for a generic K spanning manifests with mixed-scope state decls.
       const memento = scope === 'global' ? context.globalState : context.workspaceState
       type V = StateValue<M, K>
       return {

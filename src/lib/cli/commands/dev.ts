@@ -19,7 +19,6 @@ const loadManifest = async (consumerRoot: string): Promise<Manifest> => {
 const runOnce = async (consumerRoot: string): Promise<void> => {
   const manifest = await loadManifest(consumerRoot)
   const codegenResult = await runCodegen({ consumerRoot, manifest })
-  process.stdout.write(`wrote ${codegenResult.registriesPath}\n`)
   process.stdout.write(`updated ${codegenResult.packageJsonPath}\n`)
   const bootstrapResult = await generateBootstrap({ consumerRoot })
   process.stdout.write(`wrote ${bootstrapResult.bootstrapPath}\n`)

@@ -1,6 +1,5 @@
 import type { Manifest } from '#lib/manifest/schema'
 import * as path from 'node:path'
-import { emitRegistries } from './emit-registries.ts'
 import {
   mergeManifestIntoPackageJson,
   readPackageJson,
@@ -13,21 +12,19 @@ export interface CodegenInputs {
 }
 
 export interface CodegenResult {
-  registriesPath: string
   packageJsonPath: string
 }
 
+// Codegen now produces only side-effect artifacts. Registry TypeScript types
+// are derived directly from the manifest tuple shape by mapped types in
+// `#lib/runtime/registries` — no emitted `.ts` files.
 export const runCodegen = async (inputs: CodegenInputs): Promise<CodegenResult> => {
   const { consumerRoot, manifest } = inputs
-
-  const registriesPath = path.join(consumerRoot, 'src', 'generated', 'registries.ts')
-  const registriesContent = emitRegistries(manifest)
-  await Bun.write(registriesPath, registriesContent)
 
   const packageJsonPath = path.join(consumerRoot, 'package.json')
   const existing = await readPackageJson(packageJsonPath)
   const merged = mergeManifestIntoPackageJson(manifest, existing)
   await writePackageJson(packageJsonPath, merged)
 
-  return { registriesPath, packageJsonPath }
+  return { packageJsonPath }
 }
