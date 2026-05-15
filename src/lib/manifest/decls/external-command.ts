@@ -41,20 +41,24 @@ export type ExternalCommandDecl<
  *   type.
  * - `fromExtension` — optional publisher.extensionName for documentation.
  */
-const factory = <A extends Schema.Schema.AnyNoContext, R extends Schema.Schema.AnyNoContext>(spec: {
-  readonly id: string
+const factory = <
+  A extends Schema.Schema.AnyNoContext,
+  R extends Schema.Schema.AnyNoContext,
+  const Id extends string,
+>(spec: {
+  readonly id: Id
   readonly args: A
   readonly result: R
   readonly fromExtension?: string
-}): ExternalCommandDecl<A, R> => {
+}): ExternalCommandDecl<A, R, Id> => {
   const struct = ExternalCommandDeclStruct.make({
     id: spec.id,
     args: spec.args,
     result: spec.result,
     ...(spec.fromExtension !== undefined ? { fromExtension: spec.fromExtension } : {}),
   })
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- factory captures A,R on the returned value
-  return struct as ExternalCommandDecl<A, R>
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- factory captures A, R, and the id literal Id on the returned value
+  return struct as ExternalCommandDecl<A, R, Id>
 }
 
 export const ExternalCommandDecl = Object.assign(factory, {

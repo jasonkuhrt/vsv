@@ -35,18 +35,22 @@ export type StateDecl<
  *   memento serializes via `JSON.stringify`, so the schema must describe
  *   a JSON-serializable shape.
  */
-const factory = <V extends Schema.Schema.AnyNoContext>(spec: {
-  readonly key: string
-  readonly scope: 'global' | 'workspace'
+const factory = <
+  V extends Schema.Schema.AnyNoContext,
+  const K extends string,
+  const S extends 'global' | 'workspace',
+>(spec: {
+  readonly key: K
+  readonly scope: S
   readonly valueSchema: V
-}): StateDecl<V> => {
+}): StateDecl<V, K, S> => {
   const struct = StateDeclStruct.make({
     key: spec.key,
     scope: spec.scope,
     valueSchema: spec.valueSchema,
   })
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- factory captures V on the returned value
-  return struct as StateDecl<V>
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- factory captures V plus the key literal K and scope literal S on the returned value
+  return struct as StateDecl<V, K, S>
 }
 
 export const StateDecl = Object.assign(factory, {
