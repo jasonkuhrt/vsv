@@ -147,7 +147,7 @@ export type CommandResult<M, Id> =
     ? TypeOf<R>
     : unknown
 
-export type ExternalCommandArgsOf<M, Id> =
+export type ExternalCommandArgs<M, Id> =
   Extract<Tuple<M, 'externalCommands'>[number], { readonly id: Id }> extends ExternalCommandDecl<
     infer A,
     infer _R
@@ -168,6 +168,35 @@ export type StateValue<M, K> =
   StateDeclForKey<M, K> extends StateDecl<infer V> ? TypeOf<V> : unknown
 export type StateScope<M, K> =
   StateDeclForKey<M, K> extends { readonly scope: infer S } ? S : 'global' | 'workspace'
+
+/** Value type of a context key — merges owned + external. */
+export type ContextKeyValue<M, N extends string> =
+  | (Extract<Tuple<M, 'contextKeys'>[number], { readonly name: N }> extends ContextKeyDecl<
+      infer V,
+      N
+    >
+      ? TypeOf<V>
+      : never)
+  | (Extract<
+      Tuple<M, 'externalContextKeys'>[number],
+      { readonly name: N }
+    > extends ExternalContextKeyDecl<infer V, N>
+      ? TypeOf<V>
+      : never)
+
+/** Value type of an extension-owned configuration setting. */
+export type ConfigValue<M, K> =
+  Extract<Tuple<M, 'config'>[number], { readonly key: K }> extends ConfigDecl<infer V>
+    ? TypeOf<V>
+    : unknown
+
+/** Value type of a foreign (VSCode/3rd-party) configuration setting. */
+export type ForeignConfigValue<M, K> =
+  Extract<Tuple<M, 'foreignConfig'>[number], { readonly fullKey: K }> extends ForeignConfigDecl<
+    infer V
+  >
+    ? TypeOf<V>
+    : unknown
 
 /**
  * Convenience alias — any typed manifest. The runtime parameter is

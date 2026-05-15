@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { Data, Effect, Exit } from 'effect'
+import { Data, Effect, Exit, Schema } from 'effect'
 import * as nodeFs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { CommandDecl } from '../../manifest/decls/command.ts'
+import { ConfigDecl } from '../../manifest/decls/config.ts'
+import { ContextKeyDecl } from '../../manifest/decls/context-key.ts'
+import { ExternalCommandDecl } from '../../manifest/decls/external-command.ts'
+import { ForeignConfigDecl } from '../../manifest/decls/foreign-config.ts'
+import { StateDecl } from '../../manifest/decls/state.ts'
+import { defineManifest } from '../../manifest/define.ts'
 import { createTestExtensionContext } from '../../runtime-test/create-context.ts'
 import { installVSCodeMock } from '../../runtime-test/install-mock.ts'
 import '../../runtime-test/matchers.ts'
@@ -25,68 +32,79 @@ beforeEach(() => {
   vscode.reset()
 })
 
-type CommandRegistry = {
-  'vsv.greet': { args: { name: string }; result: string }
-  'vsv.add': { args: { a: number; b: number }; result: number }
-  'vsv.fail': { args: void; result: void }
-}
-
-type ContextKeyRegistry = {
-  'vsv.isActive': boolean
-  'vsv.mode': 'on' | 'off'
-}
-
-type ConfigRegistry = {
-  enabled: boolean
-}
-
-type StateRegistry = {
-  lastRun: { value: number; scope: 'global' }
-}
-
-type EventRegistry = {
-  pulse: number
-}
-
-type ForeignConfigRegistry = {
-  'editor.codeLens': boolean
-  'explorer.confirmDelete': boolean
-  'problems.visibility': boolean
-}
-
-type ExternalCommandRegistry = {
-  // No args (Schema.Void → void). Caller invokes as
-  // `rt.executeExternalCommand('moveFileToTrash')` — no extra args.
-  moveFileToTrash: { args: void; result: void }
-  // Tuple args (Schema.Tuple → [...]) spread positionally:
-  // `rt.executeExternalCommand('list.expand', uri)`. The single-Uri tuple is
-  // the simplest case of positional args.
-  'list.expand': { args: [string]; result: void }
-  // Three positional args, returning a typed result:
-  // `rt.executeExternalCommand('vscode.executeDocumentRenameProvider', uri, pos, name)`.
-  'vscode.executeDocumentRenameProvider': {
-    args: [string, { line: number; character: number }, string]
-    result: { applied: boolean }
-  }
-}
+// Shared test manifest covering every runtime surface the suite exercises.
+// One source of typing — `createRuntime(testManifest)` reads every method's
+// arg/result/value type from this manifest's tuple shape via the mapped types
+// in `../registries.ts`.
+const testManifest = defineManifest({
+  name: 'vsv-test',
+  publisher: 'vsv',
+  commands: [
+    CommandDecl({
+      id: 'vsv.greet',
+      args: Schema.Struct({ name: Schema.String }),
+      result: Schema.String,
+    }),
+    CommandDecl({
+      id: 'vsv.add',
+      args: Schema.Struct({ a: Schema.Number, b: Schema.Number }),
+      result: Schema.Number,
+    }),
+    CommandDecl({ id: 'vsv.fail', args: Schema.Void, result: Schema.Void }),
+  ],
+  contextKeys: [
+    ContextKeyDecl({ name: 'vsv.isActive', valueType: Schema.Boolean }),
+    ContextKeyDecl({ name: 'vsv.mode', valueType: Schema.Literal('on', 'off') }),
+  ],
+  config: [ConfigDecl({ key: 'enabled', valueSchema: Schema.Boolean })],
+  state: [StateDecl({ key: 'lastRun', scope: 'global', valueSchema: Schema.Number })],
+  foreignConfig: [
+    ForeignConfigDecl({ fullKey: 'editor.codeLens', valueSchema: Schema.Boolean }),
+    ForeignConfigDecl({ fullKey: 'explorer.confirmDelete', valueSchema: Schema.Boolean }),
+    ForeignConfigDecl({ fullKey: 'problems.visibility', valueSchema: Schema.Boolean }),
+  ],
+  externalCommands: [
+    // No args (Schema.Void → void). Caller invokes as
+    // `rt.executeExternalCommand('moveFileToTrash')` — no extra args.
+    ExternalCommandDecl({ id: 'moveFileToTrash', args: Schema.Void, result: Schema.Void }),
+    // Tuple args (Schema.Tuple → readonly [string]) spread positionally:
+    // `rt.executeExternalCommand('list.expand', uri)`. Single-element tuple
+    // is the simplest case of positional args.
+    ExternalCommandDecl({
+      id: 'list.expand',
+      args: Schema.Tuple(Schema.String),
+      result: Schema.Void,
+    }),
+    // Three positional args, returning a typed result.
+    ExternalCommandDecl({
+      id: 'vscode.executeDocumentRenameProvider',
+      args: Schema.Tuple(
+        Schema.String,
+        Schema.Struct({ line: Schema.Number, character: Schema.Number }),
+        Schema.String,
+      ),
+      result: Schema.Struct({ applied: Schema.Boolean }),
+    }),
+  ],
+})
 
 describe('createRuntime', () => {
   describe('defineCommand / executeCommand', () => {
     test('registers a typed command with an Effect handler', () => {
-      const r = createRuntime<CommandRegistry>()
+      const r = createRuntime(testManifest)
       Effect.runSync(r.defineCommand('vsv.greet', (args) => Effect.succeed(`Hello ${args.name}`)))
       expect(vscode).toHaveRegisteredCommand('vsv.greet')
     })
 
     test('handler receives typed args and returns typed result', async () => {
-      const r = createRuntime<CommandRegistry>()
+      const r = createRuntime(testManifest)
       Effect.runSync(r.defineCommand('vsv.add', ({ a, b }) => Effect.succeed(a + b)))
       const result = await Effect.runPromise(r.executeCommand('vsv.add', { a: 2, b: 3 }))
       expect(result).toBe(5)
     })
 
     test('Effect handler can yield other effects mid-flow', async () => {
-      const r = createRuntime<CommandRegistry>()
+      const r = createRuntime(testManifest)
       Effect.runSync(
         r.defineCommand('vsv.add', ({ a, b }) =>
           Effect.gen(function* () {
@@ -101,7 +119,7 @@ describe('createRuntime', () => {
     })
 
     test('handler failure surfaces as CommandExecutionError on executeCommand', async () => {
-      const r = createRuntime<CommandRegistry>()
+      const r = createRuntime(testManifest)
       Effect.runSync(r.defineCommand('vsv.fail', () => Effect.fail(new Error('boom'))))
       const exit = await Effect.runPromiseExit(r.executeCommand('vsv.fail', undefined))
       expect(Exit.isFailure(exit)).toBe(true)
@@ -121,7 +139,7 @@ describe('createRuntime', () => {
       class HandlerSpecificError extends Data.TaggedError('HandlerSpecificError')<{
         readonly detail: string
       }> {}
-      const r = createRuntime<CommandRegistry>()
+      const r = createRuntime(testManifest)
       Effect.runSync(
         r.defineCommand('vsv.fail', () =>
           Effect.fail(new HandlerSpecificError({ detail: 'precise' })),
@@ -143,14 +161,7 @@ describe('createRuntime', () => {
 
   describe('executeExternalCommand', () => {
     test('nullary (void args) invokes vscode command with id only', async () => {
-      const r = createRuntime<
-        CommandRegistryShape,
-        ContextKeyRegistryShape,
-        ConfigRegistryShape,
-        StateRegistryShape,
-        EventRegistryShape,
-        ExternalCommandRegistry
-      >()
+      const r = createRuntime(testManifest)
       const vs = await import('vscode')
       let calledWith: unknown[] = ['NOT-CALLED']
       vs.commands.registerCommand('moveFileToTrash', (...a: unknown[]) => {
@@ -162,14 +173,7 @@ describe('createRuntime', () => {
     })
 
     test('tuple args spread into positional vscode.commands.executeCommand args', async () => {
-      const r = createRuntime<
-        CommandRegistryShape,
-        ContextKeyRegistryShape,
-        ConfigRegistryShape,
-        StateRegistryShape,
-        EventRegistryShape,
-        ExternalCommandRegistry
-      >()
+      const r = createRuntime(testManifest)
       const vs = await import('vscode')
       let observed: unknown[] = ['NOT-CALLED']
       vs.commands.registerCommand('list.expand', (...a: unknown[]) => {
@@ -180,14 +184,7 @@ describe('createRuntime', () => {
     })
 
     test('multi-arg tuple flows through positionally', async () => {
-      const r = createRuntime<
-        CommandRegistryShape,
-        ContextKeyRegistryShape,
-        ConfigRegistryShape,
-        StateRegistryShape,
-        EventRegistryShape,
-        ExternalCommandRegistry
-      >()
+      const r = createRuntime(testManifest)
       const vs = await import('vscode')
       let observed: unknown[] = []
       vs.commands.registerCommand('vscode.executeDocumentRenameProvider', (...a: unknown[]) => {
@@ -207,27 +204,13 @@ describe('createRuntime', () => {
     })
 
     test('records the invocation in executedCommands', async () => {
-      const r = createRuntime<
-        CommandRegistryShape,
-        ContextKeyRegistryShape,
-        ConfigRegistryShape,
-        StateRegistryShape,
-        EventRegistryShape,
-        ExternalCommandRegistry
-      >()
+      const r = createRuntime(testManifest)
       await Effect.runPromise(r.executeExternalCommand('moveFileToTrash'))
       expect(vscode).toHaveExecutedCommand('moveFileToTrash')
     })
 
     test('command rejection surfaces as CommandExecutionError', async () => {
-      const r = createRuntime<
-        CommandRegistryShape,
-        ContextKeyRegistryShape,
-        ConfigRegistryShape,
-        StateRegistryShape,
-        EventRegistryShape,
-        ExternalCommandRegistry
-      >()
+      const r = createRuntime(testManifest)
       const vs = await import('vscode')
       vs.commands.registerCommand('list.expand', () => {
         throw new Error('rejected')
@@ -246,7 +229,7 @@ describe('createRuntime', () => {
 
   describe('executeCommandRaw', () => {
     test('forwards id + args through to vscode.commands.executeCommand', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const vs = await import('vscode')
       let observed: unknown[] = []
       vs.commands.registerCommand('any.id', (...a: unknown[]) => {
@@ -259,7 +242,7 @@ describe('createRuntime', () => {
     })
 
     test('rejection surfaces as CommandExecutionError', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const vs = await import('vscode')
       vs.commands.registerCommand('any.id', () => {
         throw new Error('nope')
@@ -276,29 +259,13 @@ describe('createRuntime', () => {
   describe('defineForeignConfig', () => {
     test('reads the merged value of a foreign setting', () => {
       vscode.state.setConfigurationDetail('editor.codeLens', { globalValue: true })
-      const r = createRuntime<
-        CommandRegistryShape,
-        ContextKeyRegistryShape,
-        ConfigRegistryShape,
-        StateRegistryShape,
-        EventRegistryShape,
-        ExternalCommandRegistryShape,
-        ForeignConfigRegistry
-      >()
+      const r = createRuntime(testManifest)
       const handle = Effect.runSync(r.defineForeignConfig('editor.codeLens'))
       expect(Effect.runSync(handle.get())).toBe(true)
     })
 
     test('update writes to the chosen target without re-contributing the key', async () => {
-      const r = createRuntime<
-        CommandRegistryShape,
-        ContextKeyRegistryShape,
-        ConfigRegistryShape,
-        StateRegistryShape,
-        EventRegistryShape,
-        ExternalCommandRegistryShape,
-        ForeignConfigRegistry
-      >()
+      const r = createRuntime(testManifest)
       const handle = Effect.runSync(r.defineForeignConfig('editor.codeLens'))
       await Effect.runPromise(handle.update(true, ConfigurationTarget.Global))
       expect(Effect.runSync(handle.inspect())?.globalValue).toBe(true)
@@ -306,15 +273,7 @@ describe('createRuntime', () => {
 
     test('inspect returns per-target snapshot for snapshot/restore patterns', async () => {
       vscode.state.setConfigurationDetail('explorer.confirmDelete', { globalValue: true })
-      const r = createRuntime<
-        CommandRegistryShape,
-        ContextKeyRegistryShape,
-        ConfigRegistryShape,
-        StateRegistryShape,
-        EventRegistryShape,
-        ExternalCommandRegistryShape,
-        ForeignConfigRegistry
-      >()
+      const r = createRuntime(testManifest)
       const handle = Effect.runSync(r.defineForeignConfig('explorer.confirmDelete'))
       const original = Effect.runSync(handle.inspect())?.globalValue
       expect(original).toBe(true)
@@ -325,15 +284,7 @@ describe('createRuntime', () => {
     })
 
     test('getWithDefault falls back when unset', () => {
-      const r = createRuntime<
-        CommandRegistryShape,
-        ContextKeyRegistryShape,
-        ConfigRegistryShape,
-        StateRegistryShape,
-        EventRegistryShape,
-        ExternalCommandRegistryShape,
-        ForeignConfigRegistry
-      >()
+      const r = createRuntime(testManifest)
       const handle = Effect.runSync(r.defineForeignConfig('problems.visibility'))
       expect(Effect.runSync(handle.getWithDefault(false))).toBe(false)
     })
@@ -341,13 +292,13 @@ describe('createRuntime', () => {
 
   describe('defineConfig.inspect', () => {
     test('returns undefined for unset keys', () => {
-      const r = createRuntime<CommandRegistryShape, ContextKeyRegistryShape, ConfigRegistry>()
+      const r = createRuntime(testManifest)
       const handle = Effect.runSync(r.defineConfig('enabled'))
       expect(Effect.runSync(handle.inspect())).toBeUndefined()
     })
 
     test('reflects per-target writes from update', async () => {
-      const r = createRuntime<CommandRegistryShape, ContextKeyRegistryShape, ConfigRegistry>()
+      const r = createRuntime(testManifest)
       const handle = Effect.runSync(r.defineConfig('enabled'))
       await Effect.runPromise(handle.update(true, ConfigurationTarget.Global))
       const ins = Effect.runSync(handle.inspect())
@@ -356,7 +307,7 @@ describe('createRuntime', () => {
     })
 
     test('update failure surfaces as ConfigUpdateError', async () => {
-      const r = createRuntime<CommandRegistryShape, ContextKeyRegistryShape, ConfigRegistry>()
+      const r = createRuntime(testManifest)
       const handle = Effect.runSync(r.defineConfig('enabled'))
       // Spy: replace the mock's update to throw, exercising the catch path.
       const vs = (await import('vscode')) as unknown as {
@@ -388,13 +339,13 @@ describe('createRuntime', () => {
 
   describe('defineContextKey', () => {
     test('sets initial value via setContext command', async () => {
-      const r = createRuntime<CommandRegistryShape, ContextKeyRegistry>()
+      const r = createRuntime(testManifest)
       await Effect.runPromise(r.defineContextKey('vsv.isActive', false))
       expect(vscode).toHaveContextKey('vsv.isActive', false)
     })
 
     test('set() updates value and fires onChange listeners', async () => {
-      const r = createRuntime<CommandRegistryShape, ContextKeyRegistry>()
+      const r = createRuntime(testManifest)
       const handle = await Effect.runPromise(r.defineContextKey('vsv.isActive', false))
       const observed: boolean[] = []
       Effect.runSync(handle.onChange((v) => observed.push(v)))
@@ -405,7 +356,7 @@ describe('createRuntime', () => {
     })
 
     test('onChange disposal removes listener', async () => {
-      const r = createRuntime<CommandRegistryShape, ContextKeyRegistry>()
+      const r = createRuntime(testManifest)
       const handle = await Effect.runPromise(r.defineContextKey('vsv.mode', 'off'))
       let count = 0
       const d = Effect.runSync(
@@ -425,7 +376,7 @@ describe('createRuntime', () => {
       // skipping siblings. This is critical because `set` has a `never` error
       // channel — a throwing listener would otherwise become a defect that
       // crashes the calling fiber.
-      const r = createRuntime<CommandRegistryShape, ContextKeyRegistry>()
+      const r = createRuntime(testManifest)
       const handle = await Effect.runPromise(r.defineContextKey('vsv.isActive', false))
       // Silence console.error for this test — the impl logs each listener
       // throw, which would otherwise spam test output.
@@ -465,20 +416,20 @@ describe('createRuntime', () => {
   describe('defineConfig', () => {
     test('reads value from workspace configuration', () => {
       vscode.state.setConfiguration({ enabled: true })
-      const r = createRuntime<CommandRegistryShape, ContextKeyRegistryShape, ConfigRegistry>()
+      const r = createRuntime(testManifest)
       const handle = Effect.runSync(r.defineConfig('enabled'))
       expect(Effect.runSync(handle.get())).toBe(true)
     })
 
     test('update writes value into configuration', async () => {
-      const r = createRuntime<CommandRegistryShape, ContextKeyRegistryShape, ConfigRegistry>()
+      const r = createRuntime(testManifest)
       const handle = Effect.runSync(r.defineConfig('enabled'))
       await Effect.runPromise(handle.update(true))
       expect(Effect.runSync(handle.get())).toBe(true)
     })
 
     test('getWithDefault returns defaultValue when key is missing', () => {
-      const r = createRuntime<CommandRegistryShape, ContextKeyRegistryShape, ConfigRegistry>()
+      const r = createRuntime(testManifest)
       const handle = Effect.runSync(r.defineConfig('enabled'))
       expect(Effect.runSync(handle.getWithDefault(false))).toBe(false)
     })
@@ -486,12 +437,7 @@ describe('createRuntime', () => {
 
   describe('defineState', () => {
     test('reads, writes, deletes from globalState', async () => {
-      const r = createRuntime<
-        CommandRegistryShape,
-        ContextKeyRegistryShape,
-        ConfigRegistryShape,
-        StateRegistry
-      >()
+      const r = createRuntime(testManifest)
       const ctx = createTestExtensionContext()
       const handle = Effect.runSync(r.defineState(ctx, 'lastRun', 'global'))
       expect(Effect.runSync(handle.get())).toBeUndefined()
@@ -502,24 +448,14 @@ describe('createRuntime', () => {
     })
 
     test('getWithDefault returns defaultValue when key is missing', () => {
-      const r = createRuntime<
-        CommandRegistryShape,
-        ContextKeyRegistryShape,
-        ConfigRegistryShape,
-        StateRegistry
-      >()
+      const r = createRuntime(testManifest)
       const ctx = createTestExtensionContext()
       const handle = Effect.runSync(r.defineState(ctx, 'lastRun', 'global'))
       expect(Effect.runSync(handle.getWithDefault(0))).toBe(0)
     })
 
     test('getWithDefault returns stored value when key is set', async () => {
-      const r = createRuntime<
-        CommandRegistryShape,
-        ContextKeyRegistryShape,
-        ConfigRegistryShape,
-        StateRegistry
-      >()
+      const r = createRuntime(testManifest)
       const ctx = createTestExtensionContext()
       const handle = Effect.runSync(r.defineState(ctx, 'lastRun', 'global'))
       await Effect.runPromise(handle.set(7))
@@ -527,12 +463,7 @@ describe('createRuntime', () => {
     })
 
     test('set rejection surfaces as StateUpdateError', async () => {
-      const r = createRuntime<
-        CommandRegistryShape,
-        ContextKeyRegistryShape,
-        ConfigRegistryShape,
-        StateRegistry
-      >()
+      const r = createRuntime(testManifest)
       // Hand-built broken context — `update` rejects to exercise the error path.
       const ctx = createTestExtensionContext()
       const original = ctx.globalState.update.bind(ctx.globalState)
@@ -555,15 +486,11 @@ describe('createRuntime', () => {
 
   describe('defineEvent', () => {
     test('fire() notifies subscribers', () => {
-      const r = createRuntime<
-        CommandRegistryShape,
-        ContextKeyRegistryShape,
-        ConfigRegistryShape,
-        StateRegistryShape,
-        EventRegistry
-      >()
+      const r = createRuntime(testManifest)
       const ev = Effect.runSync(r.defineEvent('pulse'))
-      const received: number[] = []
+      // Events aren't manifest-driven yet — payload is `unknown` until an
+      // `EventDecl` lands. Pub/sub mechanics are still covered.
+      const received: unknown[] = []
       const d = Effect.runSync(ev.event((v) => received.push(v)))
       Effect.runSync(ev.fire(1))
       Effect.runSync(ev.fire(2))
@@ -575,7 +502,7 @@ describe('createRuntime', () => {
 
   describe('quickPick', () => {
     test('returns value of the matched label', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       vscode.state.setNextQuickPickResult({ label: 'One' })
       const picked = await Effect.runPromise(
         r.quickPick([
@@ -587,7 +514,7 @@ describe('createRuntime', () => {
     })
 
     test('returns undefined when nothing is picked', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       vscode.state.setNextQuickPickResult(undefined)
       const picked = await Effect.runPromise(r.quickPick([{ label: 'x', value: 1 }]))
       expect(picked).toBeUndefined()
@@ -596,14 +523,14 @@ describe('createRuntime', () => {
 
   describe('notify', () => {
     test('info records a message at the info level', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       await Effect.runPromise(r.notify.info('hello'))
       const msgs = vscode.state.getShownMessages()
       expect(msgs).toEqual([{ level: 'info', message: 'hello', actions: [] }])
     })
 
     test('warn records at the warn level', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       await Effect.runPromise(r.notify.warn('careful'))
       expect(vscode.state.getShownMessages()).toEqual([
         { level: 'warn', message: 'careful', actions: [] },
@@ -611,7 +538,7 @@ describe('createRuntime', () => {
     })
 
     test('error records at the error level', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       await Effect.runPromise(r.notify.error('boom'))
       expect(vscode.state.getShownMessages()).toEqual([
         { level: 'error', message: 'boom', actions: [] },
@@ -619,7 +546,7 @@ describe('createRuntime', () => {
     })
 
     test('action buttons forward through and return the user-clicked label', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       vscode.state.setNextMessageResult('Retry')
       const picked = await Effect.runPromise(r.notify.error('failed', 'Retry', 'Cancel'))
       expect(picked).toBe('Retry')
@@ -629,14 +556,14 @@ describe('createRuntime', () => {
     })
 
     test('no-action notifications always yield undefined regardless of seeded result', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       vscode.state.setNextMessageResult('IGNORED')
       const picked = await Effect.runPromise(r.notify.info('plain'))
       expect(picked).toBeUndefined()
     })
 
     test('prompt forwards options and returns the seeded input', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       vscode.state.setNextInputBoxResult('typed-value')
       const result = await Effect.runPromise(
         r.notify.prompt({
@@ -659,7 +586,7 @@ describe('createRuntime', () => {
     })
 
     test('prompt returns undefined when dismissed', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       vscode.state.setNextInputBoxResult(undefined)
       const result = await Effect.runPromise(r.notify.prompt({ prompt: 'enter' }))
       expect(result).toBeUndefined()
@@ -668,14 +595,14 @@ describe('createRuntime', () => {
 
   describe('statusBar', () => {
     test('message records a status bar message with the default timeout', () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       Effect.runSync(r.statusBar.message('hello'))
       const msgs = vscode.state.getStatusBarMessages()
       expect(msgs).toEqual([{ message: 'hello', hideAfterTimeout: 1500 }])
     })
 
     test('message respects an explicit timeout', () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       Effect.runSync(r.statusBar.message('hello', 5000))
       expect(vscode.state.getStatusBarMessages()).toEqual([
         { message: 'hello', hideAfterTimeout: 5000 },
@@ -685,25 +612,25 @@ describe('createRuntime', () => {
 
   describe('clipboard', () => {
     test('writeText then readText round-trips the value', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       await Effect.runPromise(r.clipboard.writeText('hello'))
       expect(await Effect.runPromise(r.clipboard.readText())).toBe('hello')
     })
 
     test('readText returns the seeded clipboard value', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       vscode.state.setClipboard('seeded')
       expect(await Effect.runPromise(r.clipboard.readText())).toBe('seeded')
     })
 
     test('writeText updates observable mock state', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       await Effect.runPromise(r.clipboard.writeText('written'))
       expect(vscode.state.getClipboard()).toBe('written')
     })
 
     test('readText rejection surfaces as ClipboardError', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const vs = (await import('vscode')) as unknown as {
         env: {
           clipboard: { readText: () => Promise<string>; writeText: (t: string) => Promise<void> }
@@ -727,12 +654,12 @@ describe('createRuntime', () => {
 
   describe('workspace.folders', () => {
     test('returns undefined when no folder is open', () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       expect(Effect.runSync(r.workspace.folders())).toBeUndefined()
     })
 
     test('returns the seeded folders with computed indexes', () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const fakeUri = {
         fsPath: '/repo/a',
         toString: () => 'file:///repo/a',
@@ -747,7 +674,7 @@ describe('createRuntime', () => {
 
   describe('workspace.openTextDocument', () => {
     test('opens a seeded document', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const vs = await import('vscode')
       const uri = vs.Uri.parse('file:///foo.ts')
       vscode.state.openDocument(uri, 'console.log("hi")')
@@ -756,14 +683,14 @@ describe('createRuntime', () => {
     })
 
     test('opens by string path', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       vscode.state.openDocument('/x/y.ts', 'export const x = 1')
       const doc = await Effect.runPromise(r.workspace.openTextDocument('/x/y.ts'))
       expect(doc.getText()).toBe('export const x = 1')
     })
 
     test('rejection surfaces as DocumentOpenError', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const vs = (await import('vscode')) as unknown as {
         workspace: { openTextDocument: (t: unknown) => Promise<unknown> }
       }
@@ -784,7 +711,7 @@ describe('createRuntime', () => {
 
   describe('workspace.onDidChangeTextDocument', () => {
     test('subscribes to text document change events', () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const doc = vscode.state.openDocument('file:///changed.ts', 'before')
       const seen: string[] = []
       const disposable = Effect.runSync(
@@ -803,7 +730,7 @@ describe('createRuntime', () => {
 
   describe('workspace.saveTextDocument', () => {
     test('saves a document and yields true', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const doc = vscode.state.openDocument('file:///save-me.ts', 'content')
 
       const result = await Effect.runPromise(
@@ -813,7 +740,7 @@ describe('createRuntime', () => {
     })
 
     test('rejection surfaces as DocumentSaveError', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const doc = vscode.state.openDocument(
         'file:///save-fails.ts',
         'content',
@@ -835,7 +762,7 @@ describe('createRuntime', () => {
 
   describe('workspace.applyEdit', () => {
     test('applies an edit and yields true', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const vs = await import('vscode')
       const uri = vs.Uri.parse('file:///foo.ts')
       vscode.state.openDocument(uri, 'before')
@@ -848,7 +775,7 @@ describe('createRuntime', () => {
 
   describe('workspace.updateFolders', () => {
     test('forwards args to vscode.workspace.updateWorkspaceFolders and returns true', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const vs = await import('vscode')
       const uri = vs.Uri.file('/repo/added')
       const ok = Effect.runSync(r.workspace.updateFolders(0, 0, { uri, name: 'added' }))
@@ -861,7 +788,7 @@ describe('createRuntime', () => {
     })
 
     test('returns false when vscode rejects the splice (e.g. invalid args)', () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       vscode.state.setNextUpdateFoldersResult(false)
       const ok = Effect.runSync(r.workspace.updateFolders(99, 99)) // out-of-range delete
       expect(ok).toBe(false)
@@ -870,7 +797,7 @@ describe('createRuntime', () => {
 
   describe('window.showOpenDialog', () => {
     test('forwards options and yields the seeded selection', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const vs = await import('vscode')
       const selected = vs.Uri.file('/picked.ts')
       vscode.state.setNextOpenDialogResult([selected])
@@ -891,7 +818,7 @@ describe('createRuntime', () => {
     })
 
     test('yields undefined when the user dismisses the dialog', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       vscode.state.setNextOpenDialogResult(undefined)
       const result = await Effect.runPromise(r.window.showOpenDialog())
       expect(result).toBeUndefined()
@@ -900,7 +827,7 @@ describe('createRuntime', () => {
 
   describe('fs', () => {
     test('readDirectory returns seeded entries', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const dirUri = { fsPath: '/repo' } as unknown as import('vscode').Uri
       vscode.state.setFsDirectory('/repo', [
         ['src', 2 /* Directory */],
@@ -913,7 +840,7 @@ describe('createRuntime', () => {
     })
 
     test('readDirectory on missing path fails with FileNotFoundError', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const dirUri = { fsPath: '/nonexistent' } as unknown as import('vscode').Uri
       const exit = await Effect.runPromiseExit(r.fs.readDirectory(dirUri))
       expect(Exit.isFailure(exit)).toBe(true)
@@ -925,7 +852,7 @@ describe('createRuntime', () => {
     })
 
     test('stat returns the seeded stat', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const fileUri = { fsPath: '/repo/a' } as unknown as import('vscode').Uri
       vscode.state.setFsStat('/repo/a', { type: 1, ctime: 0, mtime: 0, size: 42 })
       const stat = await Effect.runPromise(r.fs.stat(fileUri))
@@ -933,7 +860,7 @@ describe('createRuntime', () => {
     })
 
     test('stat on missing path fails with FileNotFoundError', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const fileUri = { fsPath: '/missing' } as unknown as import('vscode').Uri
       const exit = await Effect.runPromiseExit(r.fs.stat(fileUri))
       expect(Exit.isFailure(exit)).toBe(true)
@@ -945,7 +872,7 @@ describe('createRuntime', () => {
     })
 
     test('readFile returns seeded contents', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const fileUri = { fsPath: '/repo/menus.json' } as unknown as import('vscode').Uri
       const content = new TextEncoder().encode('{"version":1}')
       vscode.state.setFsContent('/repo/menus.json', content)
@@ -954,7 +881,7 @@ describe('createRuntime', () => {
     })
 
     test('readFile on missing path fails with FileNotFoundError', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const fileUri = { fsPath: '/nope' } as unknown as import('vscode').Uri
       const exit = await Effect.runPromiseExit(r.fs.readFile(fileUri))
       expect(Exit.isFailure(exit)).toBe(true)
@@ -966,7 +893,7 @@ describe('createRuntime', () => {
     })
 
     test('writeFile records contents readable via readFile', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const fileUri = { fsPath: '/repo/out.txt' } as unknown as import('vscode').Uri
       const content = new TextEncoder().encode('hello')
       await Effect.runPromise(r.fs.writeFile(fileUri, content))
@@ -975,7 +902,7 @@ describe('createRuntime', () => {
     })
 
     test('createDirectory is idempotent', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const dirUri = { fsPath: '/repo/new' } as unknown as import('vscode').Uri
       await Effect.runPromise(r.fs.createDirectory(dirUri))
       // Second call must not throw — VSCode's createDirectory is recursive
@@ -986,7 +913,7 @@ describe('createRuntime', () => {
     })
 
     test('rename moves file content', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const from = { fsPath: '/repo/comments.json.tmp' } as unknown as import('vscode').Uri
       const to = { fsPath: '/repo/comments.json' } as unknown as import('vscode').Uri
       const content = new TextEncoder().encode('{"schema":1}')
@@ -999,7 +926,7 @@ describe('createRuntime', () => {
     })
 
     test('rename on missing path fails with FileNotFoundError', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const from = { fsPath: '/repo/missing.tmp' } as unknown as import('vscode').Uri
       const to = { fsPath: '/repo/comments.json' } as unknown as import('vscode').Uri
       const exit = await Effect.runPromiseExit(r.fs.rename(from, to))
@@ -1015,7 +942,7 @@ describe('createRuntime', () => {
 
   describe('fs.realpath', () => {
     test('resolves symlinks using Node fs', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const vs = await import('vscode')
       const tmp = await nodeFs.promises.mkdtemp(path.join(os.tmpdir(), 'vsv-realpath-'))
       try {
@@ -1033,7 +960,7 @@ describe('createRuntime', () => {
     })
 
     test('non-file scheme fails with UnsupportedSchemeError', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const vs = await import('vscode')
       const remoteUri = vs.Uri.parse('vscode-remote://remote/foo')
       const exit = await Effect.runPromiseExit(r.fs.realpath(remoteUri))
@@ -1047,7 +974,7 @@ describe('createRuntime', () => {
     })
 
     test('broken symlink fails with FileNotFoundError', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const vs = await import('vscode')
       const tmp = await nodeFs.promises.mkdtemp(path.join(os.tmpdir(), 'vsv-realpath-'))
       try {
@@ -1066,7 +993,7 @@ describe('createRuntime', () => {
     })
 
     test('non-existent path fails with FileNotFoundError', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const vs = await import('vscode')
       const exit = await Effect.runPromiseExit(
         r.fs.realpath(vs.Uri.file('/does/not/exist/anywhere/ever')),
@@ -1081,7 +1008,7 @@ describe('createRuntime', () => {
 
   describe('tabs.close', () => {
     test('closes all targeted tabs and yields true', async () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       vscode.state.setTabs([
         { label: 'a.ts', isPinned: false },
         { label: 'b.ts', isPinned: false },
@@ -1100,7 +1027,7 @@ describe('createRuntime', () => {
 
   describe('disposables', () => {
     test('dispose() disposes all members', () => {
-      const r = createRuntime()
+      const r = createRuntime(testManifest)
       const flags = { a: false, b: false }
       const group = Effect.runSync(
         r.disposables({ dispose: () => (flags.a = true) }, { dispose: () => (flags.b = true) }),
@@ -1111,10 +1038,3 @@ describe('createRuntime', () => {
     })
   })
 })
-
-type CommandRegistryShape = Record<string, { args: unknown; result: unknown }>
-type ContextKeyRegistryShape = Record<string, unknown>
-type ConfigRegistryShape = Record<string, unknown>
-type StateRegistryShape = Record<string, { value: unknown; scope: 'global' | 'workspace' }>
-type EventRegistryShape = Record<string, unknown>
-type ExternalCommandRegistryShape = Record<string, { args: unknown; result: unknown }>

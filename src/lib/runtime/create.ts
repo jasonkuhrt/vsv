@@ -1,6 +1,25 @@
 import { Cause, Effect, Exit } from 'effect'
 import * as fs from 'node:fs'
 import * as vscode from 'vscode'
+import type {
+  AnyTypedManifest,
+  CommandArgs,
+  CommandRegistryOf,
+  CommandResult,
+  ConfigRegistryOf,
+  ConfigValue,
+  ContextKeyRegistryOf,
+  ContextKeyValue,
+  EventRegistryOf,
+  ExternalCommandArgs,
+  ExternalCommandRegistryOf,
+  ExternalCommandResult,
+  ForeignConfigRegistryOf,
+  ForeignConfigValue,
+  StateRegistryOf,
+  StateScope,
+  StateValue,
+} from './registries.ts'
 import {
   ClipboardError,
   CommandExecutionError,
@@ -14,68 +33,6 @@ import {
   UnsupportedSchemeError,
   WorkspaceEditError,
 } from './errors.ts'
-
-/**
- * Shape of the `CommandRegistry` map produced by codegen from the manifest's
- * `commands` array. Each key is a command id; each value pairs the command's
- * argument and result types. Used as the constraint on `Runtime`'s `CR`
- * generic so `defineCommand`/`executeCommand` can index by id.
- */
-export type CommandRegistryShape = Record<string, { args: unknown; result: unknown }>
-
-/**
- * Shape of the `ExternalCommandRegistry` map produced by codegen from the
- * manifest's `externalCommands` array. Each key is a command id (typically a
- * VSCode core command name like `revealInExplorer` or
- * `vscode.executeDocumentRenameProvider`); each value pairs the command's
- * argument and result types. Drives `executeExternalCommand`'s typing.
- *
- * Args should typically be a tuple matching the command's positional
- * signature (e.g. `[Uri, Position, string]` for `executeDocumentRenameProvider`),
- * which `executeExternalCommand` will spread into VSCode's variadic
- * `commands.executeCommand(id, ...args)` call. `Schema.Void` is also valid
- * for nullary commands.
- */
-export type ExternalCommandRegistryShape = Record<string, { args: unknown; result: unknown }>
-
-/**
- * Shape of the `ContextKeyRegistry` map produced by codegen. Maps a context
- * key name to its value type. Drives `defineContextKey`'s value typing.
- */
-export type ContextKeyRegistryShape = Record<string, unknown>
-
-/**
- * Shape of the `ConfigRegistry` map produced by codegen. Maps a configuration
- * key (as contributed in `package.json#contributes.configuration`) to its
- * value type. Drives `defineConfig`'s value typing.
- */
-export type ConfigRegistryShape = Record<string, unknown>
-
-/**
- * Shape of the `ForeignConfigRegistry` map produced by codegen from the
- * manifest's `foreignConfig` array. Maps a foreign setting's full dotted
- * key (e.g. `editor.codeLens`, `explorer.confirmDelete`) to its value type.
- * Drives `defineForeignConfig`'s value typing.
- *
- * Foreign configs are NOT synced into `package.json#contributes.configuration`
- * — re-contributing a built-in or third-party setting would corrupt VSCode's
- * settings UI. Use foreign configs to type-safely read/write settings the
- * extension does not own.
- */
-export type ForeignConfigRegistryShape = Record<string, unknown>
-
-/**
- * Shape of the `StateRegistry` map produced by codegen. Each entry pairs a
- * value type with its memento scope (`'global'` or `'workspace'`). Drives
- * `defineState`'s value and scope typing.
- */
-export type StateRegistryShape = Record<string, { value: unknown; scope: 'global' | 'workspace' }>
-
-/**
- * Shape of the `EventRegistry` map produced by codegen. Maps an event name
- * to its payload type. Drives `defineEvent`'s payload typing.
- */
-export type EventRegistryShape = Record<string, unknown>
 
 /**
  * Handle to a context key. Returned by `runtime.defineContextKey(name, init)`.
@@ -524,8 +481,9 @@ export interface StatusBarHandle {
 }
 
 /**
- * Convert an `ExternalCommandRegistry[Id]['args']` shape into the variadic
- * tail of `executeExternalCommand`. The cases:
+ * Convert an external command's `args` value type (decoded from the manifest's
+ * `ExternalCommandDecl`) into the variadic tail of `executeExternalCommand`.
+ * The cases:
  *
  * - `void` (nullary command, e.g. `Schema.Void`) → `[]`. Consumer passes only
  *   the id: `rt.executeExternalCommand('moveFileToTrash')`.
@@ -538,35 +496,23 @@ export interface StatusBarHandle {
  * exact `void` from other types in conditional types — `T extends void` is
  * too loose because `undefined extends void` is also true.
  */
-type ExternalCommandArgs<T> = [T] extends [void] ? [] : T extends readonly unknown[] ? T : [T]
+type VariadicArgs<T> = [T] extends [void] ? [] : T extends readonly unknown[] ? T : [T]
 
 /**
- * Typed runtime surface for a vsv-managed extension. Created via
- * `createRuntime<CR, CKR, CFR, SR, ER, EXR>()` where each generic corresponds
- * to a generated `*Registry` type. Methods are indexed by the registries so
- * id/key mismatches and value-type mistakes surface at compile time.
+ * Typed runtime surface for a vsv-managed extension. The single generic
+ * `M` is the manifest the runtime was created from — its tuple shape
+ * (captured via `defineManifest<const M>`) drives the typing of every
+ * method via the mapped-type extractors in `./registries.ts`. Id/key
+ * mismatches and value-type mistakes surface at compile time without any
+ * codegen step.
  *
  * **Effect-native.** Runtime operations that touch VS Code or host state
  * return `Effect.Effect<A, E>`. Consumer extensions write handlers as
  * `Effect.gen` blocks rather than mixing direct VS Code calls, timers, and
  * `async`/`await`. The runtime bridges to VS Code's sync and Promise APIs at
  * the boundary with `Effect.sync`, `Effect.promise`, and `Effect.tryPromise`.
- *
- * Most extensions only thread the first one or two generics; defaults
- * (`*RegistryShape`) widen to permissive untyped maps when omitted. Pass
- * `ExternalCommandRegistry` as the 6th generic to enable typed
- * `executeExternalCommand` against built-in/foreign commands declared in
- * the manifest's `externalCommands`.
  */
-export interface Runtime<
-  CR extends CommandRegistryShape = CommandRegistryShape,
-  CKR extends ContextKeyRegistryShape = ContextKeyRegistryShape,
-  CFR extends ConfigRegistryShape = ConfigRegistryShape,
-  SR extends StateRegistryShape = StateRegistryShape,
-  ER extends EventRegistryShape = EventRegistryShape,
-  EXR extends ExternalCommandRegistryShape = ExternalCommandRegistryShape,
-  FCR extends ForeignConfigRegistryShape = ForeignConfigRegistryShape,
-> {
+export interface Runtime<M extends AnyTypedManifest = AnyTypedManifest> {
   /**
    * Register a command handler. The handler is Effect-typed — it returns
    * `Effect.Effect<R, E>`, where `R` matches the command's declared
@@ -578,20 +524,20 @@ export interface Runtime<
    * Yields a `Disposable` — push to `context.subscriptions` so VS Code
    * unregisters the command on extension deactivation.
    */
-  defineCommand: <Id extends keyof CR & string>(
+  defineCommand: <Id extends keyof CommandRegistryOf<M> & string>(
     id: Id,
-    handler: (args: CR[Id]['args']) => Effect.Effect<CR[Id]['result'], unknown>,
+    handler: (args: CommandArgs<M, Id>) => Effect.Effect<CommandResult<M, Id>, unknown>,
   ) => Effect.Effect<vscode.Disposable>
 
   /**
-   * Invoke a command from this extension's `CommandRegistry`. The arg shape
-   * and return type are constrained by the registry entry. For commands
-   * outside the registry, use `executeCommandRaw`.
+   * Invoke a command declared in this extension's manifest. The arg shape
+   * and return type are derived from the matching `CommandDecl`. For
+   * commands outside the manifest, use `executeCommandRaw`.
    */
-  executeCommand: <Id extends keyof CR & string>(
+  executeCommand: <Id extends keyof CommandRegistryOf<M> & string>(
     id: Id,
-    args: CR[Id]['args'],
-  ) => Effect.Effect<CR[Id]['result'], CommandExecutionError>
+    args: CommandArgs<M, Id>,
+  ) => Effect.Effect<CommandResult<M, Id>, CommandExecutionError>
 
   /**
    * Invoke a command declared in the manifest's `externalCommands` (typically
@@ -600,7 +546,7 @@ export interface Runtime<
    * manifest should typically be a tuple matching the command's positional
    * signature.
    *
-   * For commands not declared in any registry, fall back to
+   * For commands not declared in the manifest, fall back to
    * `executeCommandRaw`. Prefer this typed form when possible — it surfaces
    * id typos, missing manifest entries, and arg-shape mismatches at compile
    * time.
@@ -623,14 +569,17 @@ export interface Runtime<
    * >('vscode.executeDocumentRenameProvider', uri, position, newName)
    * ```
    */
-  executeExternalCommand: <Id extends keyof EXR & string, R = EXR[Id]['result']>(
+  executeExternalCommand: <
+    Id extends keyof ExternalCommandRegistryOf<M> & string,
+    R = ExternalCommandResult<M, Id>,
+  >(
     id: Id,
-    ...args: ExternalCommandArgs<EXR[Id]['args']>
+    ...args: VariadicArgs<ExternalCommandArgs<M, Id>>
   ) => Effect.Effect<R, CommandExecutionError>
 
   /**
    * Untyped escape hatch matching `vscode.commands.executeCommand`. Use when
-   * the command isn't in any registry. Prefer typed alternatives when
+   * the command isn't in the manifest. Prefer typed alternatives when
    * possible.
    */
   executeCommandRaw: (
@@ -642,49 +591,51 @@ export interface Runtime<
    * Define a context key. Sets the initial value via VSCode's `setContext`
    * and yields a handle for subsequent updates.
    */
-  defineContextKey: <K extends keyof CKR & string>(
+  defineContextKey: <K extends keyof ContextKeyRegistryOf<M> & string>(
     key: K,
-    initialValue: CKR[K],
-  ) => Effect.Effect<ContextKeyHandle<CKR[K]>>
+    initialValue: ContextKeyValue<M, K>,
+  ) => Effect.Effect<ContextKeyHandle<ContextKeyValue<M, K>>>
 
   /**
    * Define a configuration accessor. The optional `section` scopes reads
    * and writes (e.g. `'editor'` for `editor.foo`); omit for root keys.
    */
-  defineConfig: <K extends keyof CFR & string>(
+  defineConfig: <K extends keyof ConfigRegistryOf<M> & string>(
     key: K,
     section?: string,
-  ) => Effect.Effect<ConfigHandle<CFR[K]>>
+  ) => Effect.Effect<ConfigHandle<ConfigValue<M, K>>>
 
   /**
    * Define a typed accessor for a configuration setting **owned by VSCode
    * core or another extension**. Pass the full dotted key (e.g.
-   * `editor.codeLens`); the value type is looked up from
-   * `ForeignConfigRegistry`.
+   * `editor.codeLens`); the value type is derived from the matching
+   * `ForeignConfigDecl` in the manifest.
    *
    * Distinct from `defineConfig` because foreign settings must NOT be
    * re-contributed in `package.json#contributes.configuration` — doing so
    * would corrupt VSCode's settings UI. Foreign settings are declared via
    * `ForeignConfigDecl` and skipped by the package.json sync.
    */
-  defineForeignConfig: <K extends keyof FCR & string>(
+  defineForeignConfig: <K extends keyof ForeignConfigRegistryOf<M> & string>(
     fullKey: K,
-  ) => Effect.Effect<ConfigHandle<FCR[K]>>
+  ) => Effect.Effect<ConfigHandle<ForeignConfigValue<M, K>>>
 
   /** Define a custom event emitter. */
-  defineEvent: <K extends keyof ER & string>(key: K) => Effect.Effect<EventHandle<ER[K]>>
+  defineEvent: <K extends keyof EventRegistryOf<M> & string>(
+    key: K,
+  ) => Effect.Effect<EventHandle<EventRegistryOf<M>[K]>>
 
   /**
    * Define a typed accessor over `globalState` or `workspaceState`. The
    * `scope` argument must match the scope declared on the matching
    * `StateDecl` in the manifest — TypeScript enforces this through the
-   * `StateRegistry` entry.
+   * manifest-derived `StateScope<M, K>` extractor.
    */
-  defineState: <K extends keyof SR & string>(
+  defineState: <K extends keyof StateRegistryOf<M> & string>(
     context: vscode.ExtensionContext,
     key: K,
-    scope: SR[K]['scope'],
-  ) => Effect.Effect<StateHandle<SR[K]['value']>>
+    scope: StateScope<M, K>,
+  ) => Effect.Effect<StateHandle<StateValue<M, K>>>
 
   /**
    * Show a `QuickPick` over typed items. Yields the picked item's `value`
@@ -784,41 +735,26 @@ const toFsError =
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Create a typed runtime instance. Pass the generated `*Registry` types as
- * generics — typically only the first one or two are needed. Omitted
- * generics fall back to permissive untyped maps.
+ * Create a typed runtime instance keyed off the consumer's manifest. The
+ * manifest's tuple shape (captured via `defineManifest<const M>`) drives
+ * the typing of every method — no codegen detour, no generic-list to thread.
  *
  * @example
  * ```ts
- * import type {
- *   CommandRegistry,
- *   ContextKeyRegistry,
- *   StateRegistry,
- *   ExternalCommandRegistry,
- * } from './generated/registries.ts'
+ * import manifest from '../vsv.manifest.ts'
+ * import { createRuntime } from '@jasonkuhrt/vsv/runtime'
  *
- * const rt = createRuntime<
- *   CommandRegistry,
- *   ContextKeyRegistry,
- *   never,
- *   StateRegistry,
- *   never,
- *   ExternalCommandRegistry
- * >()
+ * const rt = createRuntime(manifest)
+ * // rt.defineCommand, rt.defineContextKey, etc. are all typed against
+ * // `typeof manifest` directly.
  * ```
  */
-export const createRuntime = <
-  CR extends CommandRegistryShape = CommandRegistryShape,
-  CKR extends ContextKeyRegistryShape = ContextKeyRegistryShape,
-  CFR extends ConfigRegistryShape = ConfigRegistryShape,
-  SR extends StateRegistryShape = StateRegistryShape,
-  ER extends EventRegistryShape = EventRegistryShape,
-  EXR extends ExternalCommandRegistryShape = ExternalCommandRegistryShape,
-  FCR extends ForeignConfigRegistryShape = ForeignConfigRegistryShape,
->(): Runtime<CR, CKR, CFR, SR, ER, EXR, FCR> => ({
-  defineCommand: <Id extends keyof CR & string>(
+export const createRuntime = <M extends AnyTypedManifest = AnyTypedManifest>(
+  _manifest: M,
+): Runtime<M> => ({
+  defineCommand: <Id extends keyof CommandRegistryOf<M> & string>(
     id: Id,
-    handler: (args: CR[Id]['args']) => Effect.Effect<CR[Id]['result'], unknown>,
+    handler: (args: CommandArgs<M, Id>) => Effect.Effect<CommandResult<M, Id>, unknown>,
   ): Effect.Effect<vscode.Disposable> =>
     Effect.sync(() => {
       // Bridge: vscode.commands.registerCommand expects a thunk that returns a
@@ -828,7 +764,7 @@ export const createRuntime = <
       // identity. Plain `runPromise` rejects with `FiberFailure` wrapping the
       // cause, which loses tag identity for downstream `executeCommand` callers
       // matching on `CommandExecutionError.cause._tag`.
-      const thunk = async (args: CR[Id]['args']): Promise<CR[Id]['result']> => {
+      const thunk = async (args: CommandArgs<M, Id>): Promise<CommandResult<M, Id>> => {
         const exit = await Effect.runPromiseExit(handler(args))
         if (Exit.isSuccess(exit)) return exit.value
         const failure = Cause.failureOption(exit.cause)
@@ -840,28 +776,31 @@ export const createRuntime = <
       return vscode.commands.registerCommand(id, thunk as (...args: unknown[]) => unknown)
     }),
 
-  executeCommand: <Id extends keyof CR & string>(
+  executeCommand: <Id extends keyof CommandRegistryOf<M> & string>(
     id: Id,
-    args: CR[Id]['args'],
-  ): Effect.Effect<CR[Id]['result'], CommandExecutionError> =>
+    args: CommandArgs<M, Id>,
+  ): Effect.Effect<CommandResult<M, Id>, CommandExecutionError> =>
     Effect.tryPromise({
-      // The cast pins vscode's `Thenable<unknown>` to the registry's declared
-      // result type. Lint can't see the registry guarantee, so the unsafe
+      // The cast pins vscode's `Thenable<unknown>` to the manifest's declared
+      // result type. Lint can't see the manifest guarantee, so the unsafe
       // assertion lives at the API boundary alongside its sibling in
       // executeExternalCommand below.
       // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
-      try: () => vscode.commands.executeCommand(id, args) as Promise<CR[Id]['result']>,
+      try: () => vscode.commands.executeCommand(id, args) as Promise<CommandResult<M, Id>>,
       catch: (cause) => new CommandExecutionError({ id, cause }),
     }),
 
-  executeExternalCommand: <Id extends keyof EXR & string, R = EXR[Id]['result']>(
+  executeExternalCommand: <
+    Id extends keyof ExternalCommandRegistryOf<M> & string,
+    R = ExternalCommandResult<M, Id>,
+  >(
     id: Id,
-    ...args: ExternalCommandArgs<EXR[Id]['args']>
+    ...args: VariadicArgs<ExternalCommandArgs<M, Id>>
   ): Effect.Effect<R, CommandExecutionError> =>
     Effect.tryPromise({
       // The cast is the implementation contract: the runtime trusts the
       // manifest's declared result type (or the caller's override `R`). Lint
-      // can't see the registry guarantee, so the unsafe assertion lives at
+      // can't see the manifest guarantee, so the unsafe assertion lives at
       // the API boundary.
       // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion
       try: () => vscode.commands.executeCommand(id, ...args) as Promise<R>,
@@ -877,13 +816,16 @@ export const createRuntime = <
       catch: (cause) => new CommandExecutionError({ id, cause }),
     }),
 
-  defineContextKey: <K extends keyof CKR & string>(key: K, initialValue: CKR[K]) =>
+  defineContextKey: <K extends keyof ContextKeyRegistryOf<M> & string>(
+    key: K,
+    initialValue: ContextKeyValue<M, K>,
+  ) =>
     Effect.gen(function* () {
       let current = initialValue
-      const listeners = new Set<(v: CKR[K]) => void>()
+      const listeners = new Set<(v: ContextKeyValue<M, K>) => void>()
       yield* Effect.promise(() => vscode.commands.executeCommand('setContext', key, current))
       return {
-        set: (value: CKR[K]): Effect.Effect<void> =>
+        set: (value: ContextKeyValue<M, K>): Effect.Effect<void> =>
           Effect.promise(async () => {
             current = value
             await vscode.commands.executeCommand('setContext', key, value)
@@ -900,8 +842,8 @@ export const createRuntime = <
               }
             }
           }),
-        get: (): Effect.Effect<CKR[K]> => Effect.sync(() => current),
-        onChange: (cb: (v: CKR[K]) => void): Effect.Effect<vscode.Disposable> =>
+        get: (): Effect.Effect<ContextKeyValue<M, K>> => Effect.sync(() => current),
+        onChange: (cb: (v: ContextKeyValue<M, K>) => void): Effect.Effect<vscode.Disposable> =>
           Effect.sync(() => {
             listeners.add(cb)
             return {
@@ -913,27 +855,28 @@ export const createRuntime = <
       }
     }),
 
-  defineConfig: <K extends keyof CFR & string>(key: K, section?: string) =>
+  defineConfig: <K extends keyof ConfigRegistryOf<M> & string>(key: K, section?: string) =>
     Effect.sync(() => {
       const getCfg = (): vscode.WorkspaceConfiguration => vscode.workspace.getConfiguration(section)
       const fullKey = section === undefined ? key : `${section}.${key}`
+      type V = ConfigValue<M, K>
       return {
-        get: (): Effect.Effect<CFR[K] | undefined> => Effect.sync(() => getCfg().get<CFR[K]>(key)),
-        getWithDefault: (defaultValue: CFR[K]): Effect.Effect<CFR[K]> =>
-          Effect.sync(() => getCfg().get<CFR[K]>(key, defaultValue)),
+        get: (): Effect.Effect<V | undefined> => Effect.sync(() => getCfg().get<V>(key)),
+        getWithDefault: (defaultValue: V): Effect.Effect<V> =>
+          Effect.sync(() => getCfg().get<V>(key, defaultValue)),
         update: (
-          value: CFR[K] | undefined,
+          value: V | undefined,
           target: vscode.ConfigurationTarget = vscode.ConfigurationTarget.Workspace,
         ): Effect.Effect<void, ConfigUpdateError> =>
           Effect.tryPromise({
             try: () => Promise.resolve(getCfg().update(key, value, target)),
             catch: (cause) => new ConfigUpdateError({ key: fullKey, target, cause }),
           }),
-        inspect: (): Effect.Effect<ConfigInspection<CFR[K]> | undefined> =>
+        inspect: (): Effect.Effect<ConfigInspection<V> | undefined> =>
           Effect.sync(() => {
-            const ins = getCfg().inspect<CFR[K]>(key)
+            const ins = getCfg().inspect<V>(key)
             if (ins === undefined) return undefined
-            const out: ConfigInspection<CFR[K]> = { key: ins.key }
+            const out: ConfigInspection<V> = { key: ins.key }
             if (ins.defaultValue !== undefined) out.defaultValue = ins.defaultValue
             if (ins.globalValue !== undefined) out.globalValue = ins.globalValue
             if (ins.workspaceValue !== undefined) out.workspaceValue = ins.workspaceValue
@@ -941,11 +884,11 @@ export const createRuntime = <
               out.workspaceFolderValue = ins.workspaceFolderValue
             return out
           }),
-        onChange: (cb: (value: CFR[K] | undefined) => void): Effect.Effect<vscode.Disposable> =>
+        onChange: (cb: (value: V | undefined) => void): Effect.Effect<vscode.Disposable> =>
           Effect.sync(() =>
             vscode.workspace.onDidChangeConfiguration((e) => {
               if (e.affectsConfiguration(fullKey)) {
-                cb(getCfg().get<CFR[K]>(key))
+                cb(getCfg().get<V>(key))
               }
             }),
           ),
@@ -956,27 +899,27 @@ export const createRuntime = <
   // dotted key. This avoids ambiguity for nested settings like
   // `typescript.preferences.useAliasesForRenames` where the section/key split
   // is not unique.
-  defineForeignConfig: <K extends keyof FCR & string>(fullKey: K) =>
+  defineForeignConfig: <K extends keyof ForeignConfigRegistryOf<M> & string>(fullKey: K) =>
     Effect.sync(() => {
       const getCfg = (): vscode.WorkspaceConfiguration => vscode.workspace.getConfiguration()
+      type V = ForeignConfigValue<M, K>
       return {
-        get: (): Effect.Effect<FCR[K] | undefined> =>
-          Effect.sync(() => getCfg().get<FCR[K]>(fullKey)),
-        getWithDefault: (defaultValue: FCR[K]): Effect.Effect<FCR[K]> =>
-          Effect.sync(() => getCfg().get<FCR[K]>(fullKey, defaultValue)),
+        get: (): Effect.Effect<V | undefined> => Effect.sync(() => getCfg().get<V>(fullKey)),
+        getWithDefault: (defaultValue: V): Effect.Effect<V> =>
+          Effect.sync(() => getCfg().get<V>(fullKey, defaultValue)),
         update: (
-          value: FCR[K] | undefined,
+          value: V | undefined,
           target: vscode.ConfigurationTarget = vscode.ConfigurationTarget.Workspace,
         ): Effect.Effect<void, ConfigUpdateError> =>
           Effect.tryPromise({
             try: () => Promise.resolve(getCfg().update(fullKey, value, target)),
             catch: (cause) => new ConfigUpdateError({ key: fullKey, target, cause }),
           }),
-        inspect: (): Effect.Effect<ConfigInspection<FCR[K]> | undefined> =>
+        inspect: (): Effect.Effect<ConfigInspection<V> | undefined> =>
           Effect.sync(() => {
-            const ins = getCfg().inspect<FCR[K]>(fullKey)
+            const ins = getCfg().inspect<V>(fullKey)
             if (ins === undefined) return undefined
-            const out: ConfigInspection<FCR[K]> = { key: ins.key }
+            const out: ConfigInspection<V> = { key: ins.key }
             if (ins.defaultValue !== undefined) out.defaultValue = ins.defaultValue
             if (ins.globalValue !== undefined) out.globalValue = ins.globalValue
             if (ins.workspaceValue !== undefined) out.workspaceValue = ins.workspaceValue
@@ -984,26 +927,27 @@ export const createRuntime = <
               out.workspaceFolderValue = ins.workspaceFolderValue
             return out
           }),
-        onChange: (cb: (value: FCR[K] | undefined) => void): Effect.Effect<vscode.Disposable> =>
+        onChange: (cb: (value: V | undefined) => void): Effect.Effect<vscode.Disposable> =>
           Effect.sync(() =>
             vscode.workspace.onDidChangeConfiguration((e) => {
               if (e.affectsConfiguration(fullKey)) {
-                cb(getCfg().get<FCR[K]>(fullKey))
+                cb(getCfg().get<V>(fullKey))
               }
             }),
           ),
       }
     }),
 
-  defineEvent: <K extends keyof ER & string>(_key: K) =>
+  defineEvent: <K extends keyof EventRegistryOf<M> & string>(_key: K) =>
     Effect.sync(() => {
-      const emitter = new vscode.EventEmitter<ER[K]>()
+      type V = EventRegistryOf<M>[K]
+      const emitter = new vscode.EventEmitter<V>()
       return {
-        fire: (value: ER[K]): Effect.Effect<void> =>
+        fire: (value: V): Effect.Effect<void> =>
           Effect.sync(() => {
             emitter.fire(value)
           }),
-        event: (listener: (value: ER[K]) => void): Effect.Effect<vscode.Disposable> =>
+        event: (listener: (value: V) => void): Effect.Effect<vscode.Disposable> =>
           Effect.sync(() => emitter.event(listener)),
         dispose: (): Effect.Effect<void> =>
           Effect.sync(() => {
@@ -1012,19 +956,19 @@ export const createRuntime = <
       }
     }),
 
-  defineState: <K extends keyof SR & string>(
+  defineState: <K extends keyof StateRegistryOf<M> & string>(
     context: vscode.ExtensionContext,
     key: K,
-    scope: SR[K]['scope'],
+    scope: StateScope<M, K>,
   ) =>
     Effect.sync(() => {
       const memento = scope === 'global' ? context.globalState : context.workspaceState
+      type V = StateValue<M, K>
       return {
-        get: (): Effect.Effect<SR[K]['value'] | undefined> =>
-          Effect.sync(() => memento.get<SR[K]['value']>(key)),
-        getWithDefault: (defaultValue: SR[K]['value']): Effect.Effect<SR[K]['value']> =>
-          Effect.sync(() => memento.get<SR[K]['value']>(key, defaultValue)),
-        set: (value: SR[K]['value']): Effect.Effect<void, StateUpdateError> =>
+        get: (): Effect.Effect<V | undefined> => Effect.sync(() => memento.get<V>(key)),
+        getWithDefault: (defaultValue: V): Effect.Effect<V> =>
+          Effect.sync(() => memento.get<V>(key, defaultValue)),
+        set: (value: V): Effect.Effect<void, StateUpdateError> =>
           Effect.tryPromise({
             try: () => Promise.resolve(memento.update(key, value)),
             catch: (cause) => new StateUpdateError({ key, operation: 'set', cause }),
