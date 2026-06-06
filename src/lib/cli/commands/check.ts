@@ -1,3 +1,4 @@
+import { drift } from './drift.ts'
 import { lint } from './lint.ts'
 import { test } from './test.ts'
 import { typecheck } from './typecheck.ts'
@@ -7,5 +8,7 @@ export const check = async (): Promise<number> => {
   if (lintCode !== 0) return lintCode
   const typecheckCode = await typecheck()
   if (typecheckCode !== 0) return typecheckCode
-  return test()
+  const testCode = await test()
+  if (testCode !== 0) return testCode
+  return drift()
 }

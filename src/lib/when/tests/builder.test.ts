@@ -3,8 +3,15 @@ import { Schema } from 'effect'
 import { ContextKeyDecl } from '#lib/manifest/decls/context-key'
 import { ExternalContextKeyDecl } from '#lib/manifest/decls/external-context-key'
 import { defineManifest } from '#lib/manifest/define'
+import { OpenEnum } from '#lib/schema/open-enum'
 import { When } from '../builder.ts'
 import { WhenClause } from '../when.ts'
+
+const EditorLangId = OpenEnum('editorLangId', {
+  typescript: 'typescript',
+  javascript: 'javascript',
+  markdown: 'markdown',
+})
 
 const manifest = defineManifest({
   name: 'ext',
@@ -20,6 +27,7 @@ const manifest = defineManifest({
     }),
     ExternalContextKeyDecl({ name: 'inputFocus', valueType: Schema.Boolean }),
     ExternalContextKeyDecl({ name: 'editorLangId', valueType: Schema.String }),
+    ExternalContextKeyDecl({ name: 'lang', valueType: EditorLangId }),
     // Two decls, same name, different literal — `ContextKeyValue` merges
     // them into the union `'bottom' | 'right'` (design Gap 3).
     ExternalContextKeyDecl({ name: 'panelPosition', valueType: Schema.Literal('bottom') }),
@@ -51,8 +59,10 @@ describe('When builder', () => {
       $.not($.is('inputFocus')),
     )
     expect(ast._tag).toBe('WhenAnd')
+    // Minimal idiomatic form: `&&` binds tighter than nothing here, the bare-key
+    // negation emits `!inputFocus` (no parens), and the `==` atom needs none.
     expect(encode(ast)).toBe(
-      "(activeCustomEditorId == 'vscode.markdown.preview.editor') && (!(inputFocus))",
+      "activeCustomEditorId == 'vscode.markdown.preview.editor' && !inputFocus",
     )
   })
 
@@ -60,7 +70,9 @@ describe('When builder', () => {
     const $ = When(manifest)
     const ast = $.or($.and($.is('ext.ready'), $.is('inputFocus')), $.is('inputFocus'))
     expect(ast._tag).toBe('WhenOr')
-    expect(encode(ast)).toBe('((ext.ready) && (inputFocus)) || (inputFocus)')
+    // `&&` binds tighter than `||`, so the `And` term renders bare under the
+    // `Or` — exactly how VS Code itself writes it.
+    expect(encode(ast)).toBe('ext.ready && inputFocus || inputFocus')
   })
 
   test('unsafe.raw is an explicit escape hatch', () => {
@@ -76,6 +88,33 @@ describe('When builder', () => {
     expect($.is('activeCustomEditorId')._tag).toBe('WhenBoolKey')
     expect($.is('inputFocus')._tag).toBe('WhenBoolKey')
     expect($.neq('inputFocus', true)._tag).toBe('WhenNeq')
+  })
+})
+
+describe('When builder — eq on an OpenEnum key', () => {
+  test('a known member encodes to a primitive string literal — not the tagged struct', () => {
+    const $ = When(manifest)
+    const ast = $.eq('lang', 'typescript')
+    expect(ast._tag).toBe('WhenEq')
+    // WhenEq.make receives the primitive string at runtime; the tagged
+    // OpenEnum struct never reaches the AST.
+    expect(ast).toMatchObject({ key: 'lang', value: 'typescript' })
+    expect(encode(ast)).toBe("lang == 'typescript'")
+  })
+
+  test('an unmodeled value is accepted and encodes verbatim', () => {
+    const $ = When(manifest)
+    // `'rust'` is outside the modeled core membership; the open-string escape
+    // admits it and it round-trips as a plain literal.
+    const ast = $.eq('lang', 'rust')
+    expect(ast._tag).toBe('WhenEq')
+    expect(ast).toMatchObject({ key: 'lang', value: 'rust' })
+    expect(encode(ast)).toBe("lang == 'rust'")
+  })
+
+  test('neq mirrors eq for an OpenEnum key', () => {
+    const $ = When(manifest)
+    expect(encode($.neq('lang', 'markdown'))).toBe("lang != 'markdown'")
   })
 })
 

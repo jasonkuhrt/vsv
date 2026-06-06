@@ -11,6 +11,7 @@ import { ContextKeyDecl } from './decls/context-key.ts'
 import { ExternalCommandDecl } from './decls/external-command.ts'
 import { ExternalContextKeyDecl } from './decls/external-context-key.ts'
 import { ForeignConfigDecl } from './decls/foreign-config.ts'
+import { MenuDecl } from './decls/menu.ts'
 import { StateDecl } from './decls/state.ts'
 
 export {
@@ -20,6 +21,7 @@ export {
   ExternalCommandDecl,
   ExternalContextKeyDecl,
   ForeignConfigDecl,
+  MenuDecl,
   StateDecl,
 }
 
@@ -45,9 +47,9 @@ export {
  * - `extensionDependencies` — list of `publisher.name` ids this
  *   extension requires VS Code to install/activate first.
  * - `commands`, `externalCommands`, `contextKeys`, `config`,
- *   `foreignConfig`, `state` — the typed contribution arrays, each
- *   driving one generated registry. Authored via the matching
- *   `*Decl({ ... })` factory.
+ *   `foreignConfig`, `menus`, `state` — the typed contribution arrays, each
+ *   driving one generated registry or `package.json` contribution. Authored
+ *   via the matching `*Decl({ ... })` factory.
  */
 export class Manifest extends Schema.TaggedClass<Manifest>()('Manifest', {
   name: Schema.NonEmptyTrimmedString,
@@ -64,5 +66,6 @@ export class Manifest extends Schema.TaggedClass<Manifest>()('Manifest', {
   externalContextKeys: Schema.optional(Schema.Array(ExternalContextKeyDecl.Struct)),
   config: Schema.optional(Schema.Array(ConfigDecl.Struct)),
   foreignConfig: Schema.optional(Schema.Array(ForeignConfigDecl.Struct)),
+  menus: Schema.optional(Schema.Array(MenuDecl.Struct)),
   state: Schema.optional(Schema.Array(StateDecl.Struct)),
 }) {}

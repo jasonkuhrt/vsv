@@ -97,6 +97,16 @@ describe('WhenClause property tests', () => {
     )
   })
 
+  test('string codec: encode is stable/idempotent — encode(decode(encode(ast))) === encode(ast)', () => {
+    fc.assert(
+      fc.property(arbWellFormed, (ast) => {
+        const once = encode(ast)
+        expect(encode(decode(once))).toBe(once)
+      }),
+      { numRuns: 500 },
+    )
+  })
+
   test('struct codec: decodeStruct(encodeStruct(ast)) preserves any AST', () => {
     fc.assert(
       fc.property(Arbitrary.make(WhenAstStruct), (ast) => {

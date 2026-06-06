@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { Schema } from 'effect'
-import { CommandDecl, ConfigDecl, ContextKeyDecl, ExternalContextKeyDecl } from '../schema.ts'
+import {
+  CommandDecl,
+  ConfigDecl,
+  ContextKeyDecl,
+  ExternalContextKeyDecl,
+  MenuDecl,
+} from '../schema.ts'
+import { WhenBoolKey } from '../../when/when.ts'
 import { defineManifest, type TypedManifest } from '../define.ts'
 
 describe('defineManifest', () => {
@@ -100,6 +107,27 @@ describe('defineManifest', () => {
     // `Schema.Literal<['vscode.markdown.preview.editor', 'vscode.audioPreview']>`
     // — the closed-enum union flows into the manifest tuple for the
     // future `When.eq.activeCustomEditorId(...)` builder.
+  })
+
+  test('menus tuple is captured verbatim with its WhenAst', () => {
+    const when = WhenBoolKey.make({ key: 'explorerResourceIsFolder' })
+    const menu = MenuDecl({
+      location: 'explorer/context',
+      command: 'ext.delete',
+      when,
+      group: 'navigation',
+    })
+    const m = defineManifest({
+      name: 'ext',
+      publisher: 'jasonkuhrt',
+      commands: [CommandDecl({ id: 'ext.delete', args: Schema.Void, result: Schema.Void })],
+      menus: [menu],
+    })
+    expect(m.menus[0]).toBe(menu)
+    expect(m.menus[0].location).toBe('explorer/context')
+    expect(m.menus[0].command).toBe('ext.delete')
+    expect(m.menus[0].when).toBe(when)
+    expect(m.menus[0].group).toBe('navigation')
   })
 
   test('TypedManifest type alias is exported for downstream consumers', () => {

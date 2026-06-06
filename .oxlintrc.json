@@ -50,7 +50,8 @@
     "typescript/no-non-null-assertion": "warn",
     "typescript/no-import-type-side-effects": "warn",
     "typescript/no-unnecessary-condition": "warn",
-    "typescript/ban-ts-comment": "warn"
+    "typescript/ban-ts-comment": "warn",
+    "eslint/no-underscore-dangle": ["warn", { "allow": ["_tag"] }]
   },
   "overrides": [
     {
@@ -131,7 +132,8 @@
       "rules": {
         "typescript/no-unsafe-type-assertion": "off",
         "typescript/no-unnecessary-type-parameters": "off",
-        "typescript/no-base-to-string": "off"
+        "typescript/no-base-to-string": "off",
+        "eslint/no-underscore-dangle": "off"
       }
     },
     {

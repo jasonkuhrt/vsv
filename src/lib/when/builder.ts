@@ -11,7 +11,7 @@
 // parameter — a flat-method surface, consistent with the runtime's
 // `defineCommand(id, args)`.
 
-import type { ContextKeyValue } from '#lib/manifest/context-key-value'
+import type { ContextKeyValue, ContextKeyValueArg } from '#lib/manifest/context-key-value'
 import type { ContextKeyDecl } from '#lib/manifest/decls/context-key'
 import type { ExternalContextKeyDecl } from '#lib/manifest/decls/external-context-key'
 import type { TypedManifest } from '#lib/manifest/define'
@@ -88,18 +88,22 @@ export interface WhenBuilder<M> {
 
   /**
    * Equality atom — `key == value`. The `value` argument is narrowed to the
-   * key's declared value domain (`ContextKeyValue`): a boolean key accepts
-   * `boolean`, a `Schema.Literal('a', 'b')` key accepts `'a' | 'b'`.
+   * key's declared authoring value domain (`ContextKeyValueArg`): a boolean
+   * key accepts `boolean`, a `Schema.Literal('a', 'b')` key accepts
+   * `'a' | 'b'`. For an `OpenEnum`-typed key the argument is the bare
+   * known-member string union plus an open-string escape — the known members
+   * autocomplete while an unmodeled string is still accepted (a `when` clause
+   * may legitimately compare a value outside the modeled core membership).
    */
   readonly eq: <K extends ContextKeyName<M> & string>(
     key: K,
-    value: ContextKeyValue<M, K>,
+    value: ContextKeyValueArg<M, K>,
   ) => WhenAst
 
   /** Inequality atom — `key != value`. Value narrowed as in `eq`. */
   readonly neq: <K extends ContextKeyName<M> & string>(
     key: K,
-    value: ContextKeyValue<M, K>,
+    value: ContextKeyValueArg<M, K>,
   ) => WhenAst
 
   /**
@@ -124,18 +128,20 @@ export interface WhenBuilder<M> {
    */
   readonly in: (key: ContextKeyName<M>, set: ContextKeyName<M>) => WhenAst
 
-  /** Negation — `!(inner)`. */
+  /** Negation — `!key` for a bare key, `!(inner)` for a compound. */
   readonly not: (inner: WhenAst) => WhenAst
 
   /**
-   * Conjunction — `(t1) && (t2) && …`. Requires at least two terms; a
-   * one-term `&&` is just the term itself, and `WhenAnd` rejects it.
+   * Conjunction — `t1 && t2 && …` (minimal parens; an `Or` or nested `And`
+   * term is fenced). Requires at least two terms; a one-term `&&` is just the
+   * term itself, and `WhenAnd` rejects it.
    */
   readonly and: (first: WhenAst, second: WhenAst, ...rest: ReadonlyArray<WhenAst>) => WhenAst
 
   /**
-   * Disjunction — `(t1) || (t2) || …`. Requires at least two terms; a
-   * one-term `||` is just the term itself, and `WhenOr` rejects it.
+   * Disjunction — `t1 || t2 || …` (minimal parens; a nested `Or` term is
+   * fenced). Requires at least two terms; a one-term `||` is just the term
+   * itself, and `WhenOr` rejects it.
    */
   readonly or: (first: WhenAst, second: WhenAst, ...rest: ReadonlyArray<WhenAst>) => WhenAst
 

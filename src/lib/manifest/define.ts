@@ -11,6 +11,7 @@ import type { ContextKeyDecl } from './decls/context-key.ts'
 import type { ExternalCommandDecl } from './decls/external-command.ts'
 import type { ExternalContextKeyDecl } from './decls/external-context-key.ts'
 import type { ForeignConfigDecl } from './decls/foreign-config.ts'
+import type { MenuDecl } from './decls/menu.ts'
 import type { StateDecl } from './decls/state.ts'
 import { Manifest } from './schema.ts'
 
@@ -34,6 +35,7 @@ export interface ManifestSpec {
   readonly externalContextKeys?: ReadonlyArray<ExternalContextKeyDecl>
   readonly config?: ReadonlyArray<ConfigDecl>
   readonly foreignConfig?: ReadonlyArray<ForeignConfigDecl>
+  readonly menus?: ReadonlyArray<MenuDecl>
   readonly state?: ReadonlyArray<StateDecl>
 }
 

@@ -195,9 +195,28 @@ describe('WhenNot', () => {
     )
   })
 
-  test('encode emits !(...)', () => {
+  test('encode emits bare !key for a bare-key inner (no parens)', () => {
     const ast = WhenNot.make({ inner: WhenBoolKey.make({ key: 'inputFocus' }) })
-    expect(encode(ast)).toBe('!(inputFocus)')
+    expect(encode(ast)).toBe('!inputFocus')
+    expect(decode(encode(ast))).toEqual(ast)
+  })
+
+  test('encode wraps a non-key inner in !(...)', () => {
+    // `!` binds tighter than the `==` atom, so negating an `Eq` requires the
+    // paren envelope or `!a == b` would parse as `(!a) == b`.
+    const ast = WhenNot.make({ inner: WhenEq.make({ key: 'a', value: 'b' }) })
+    expect(encode(ast)).toBe("!(a == 'b')")
+    expect(decode(encode(ast))).toEqual(ast)
+  })
+
+  test('encode wraps a compound inner in !(...)', () => {
+    const ast = WhenNot.make({
+      inner: WhenAnd.make({
+        terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
+      }),
+    })
+    expect(encode(ast)).toBe('!(a && b)')
+    expect(decode(encode(ast))).toEqual(ast)
   })
 })
 
@@ -232,11 +251,40 @@ describe('WhenAnd', () => {
     )
   })
 
-  test('encode produces fully-parenthesized canonical form', () => {
+  test('encode produces minimal-paren canonical form (no per-term parens)', () => {
     const ast = WhenAnd.make({
       terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
     })
-    expect(encode(ast)).toBe('(a) && (b)')
+    expect(encode(ast)).toBe('a && b')
+    expect(decode(encode(ast))).toEqual(ast)
+  })
+
+  test('encode fences an Or term under And (Or binds looser)', () => {
+    const ast = WhenAnd.make({
+      terms: [
+        WhenBoolKey.make({ key: 'a' }),
+        WhenOr.make({
+          terms: [WhenBoolKey.make({ key: 'b' }), WhenBoolKey.make({ key: 'c' })],
+        }),
+      ],
+    })
+    expect(encode(ast)).toBe('a && (b || c)')
+    expect(decode(encode(ast))).toEqual(ast)
+  })
+
+  test('encode fences a nested And term under And (preserves structure)', () => {
+    // `a && (b && c)` and `a && b && c` are distinct ASTs; the inner And is
+    // fenced so the structure survives a re-parse.
+    const ast = WhenAnd.make({
+      terms: [
+        WhenBoolKey.make({ key: 'a' }),
+        WhenAnd.make({
+          terms: [WhenBoolKey.make({ key: 'b' }), WhenBoolKey.make({ key: 'c' })],
+        }),
+      ],
+    })
+    expect(encode(ast)).toBe('a && (b && c)')
+    expect(decode(encode(ast))).toEqual(ast)
   })
 })
 
@@ -264,11 +312,38 @@ describe('WhenOr', () => {
     )
   })
 
-  test('encode produces fully-parenthesized canonical form', () => {
+  test('encode produces minimal-paren canonical form (no per-term parens)', () => {
     const ast = WhenOr.make({
       terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
     })
-    expect(encode(ast)).toBe('(a) || (b)')
+    expect(encode(ast)).toBe('a || b')
+    expect(decode(encode(ast))).toEqual(ast)
+  })
+
+  test('encode leaves an And term bare under Or (And binds tighter)', () => {
+    const ast = WhenOr.make({
+      terms: [
+        WhenAnd.make({
+          terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
+        }),
+        WhenBoolKey.make({ key: 'c' }),
+      ],
+    })
+    expect(encode(ast)).toBe('a && b || c')
+    expect(decode(encode(ast))).toEqual(ast)
+  })
+
+  test('encode fences a nested Or term under Or (preserves structure)', () => {
+    const ast = WhenOr.make({
+      terms: [
+        WhenBoolKey.make({ key: 'a' }),
+        WhenOr.make({
+          terms: [WhenBoolKey.make({ key: 'b' }), WhenBoolKey.make({ key: 'c' })],
+        }),
+      ],
+    })
+    expect(encode(ast)).toBe('a || (b || c)')
+    expect(decode(encode(ast))).toEqual(ast)
   })
 })
 

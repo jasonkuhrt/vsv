@@ -1,0 +1,22 @@
+[
+  "!editorIsOpen && !inputFocus",
+  "!suggestWidgetVisible && !inQuickOpen && !codeActionMenuVisible && !parameterHintsVisible && !referenceSearchVisible",
+  "!terminalFocus",
+  "activeCustomEditorId == 'vscode.markdown.preview.editor'",
+  "codeActionMenuVisible",
+  "editorFocus && findWidgetVisible",
+  "editorTextFocus",
+  "editorTextFocus && neovim.mode == 'visual'",
+  "filesExplorerFocus && !inputFocus",
+  "filesExplorerFocus && !inputFocus && !explorerResourceIsFolder",
+  "filesExplorerFocus && !inputFocus && explorerResourceIsFolder",
+  "filesExplorerFocus && foldersViewVisible && !inputFocus",
+  "groupActiveEditorCount == 1 && !multipleEditorGroups",
+  "inQuickOpen",
+  "listFocus && !inputFocus",
+  "parameterHintsVisible && parameterHintsMultipleSignatures",
+  "referenceSearchVisible",
+  "searchViewletVisible",
+  "suggestWidgetVisible",
+  "terminalFocus"
+]

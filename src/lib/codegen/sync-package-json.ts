@@ -1,6 +1,6 @@
 import type { Manifest } from '#lib/manifest/schema'
-import { JSONSchema } from 'effect'
-import type { Schema } from 'effect'
+import { WhenClause } from '#lib/when/when'
+import { JSONSchema, Schema } from 'effect'
 
 type JsonObject = { [k: string]: unknown }
 
@@ -70,6 +70,24 @@ export const mergeManifestIntoPackageJson = (
       properties[c.key] = entry
     }
     contributes['configuration'] = { type: 'object', properties }
+  }
+
+  if (manifest.menus !== undefined && manifest.menus.length > 0) {
+    // `contributes.menus` is keyed by menu location (`explorer/context`,
+    // `commandPalette`, …); each value is the array of entries for that
+    // location, in declared order. The flat `MenuDecl[]` is grouped here.
+    const menus: { [location: string]: Array<JsonObject> } = {}
+    for (const m of manifest.menus) {
+      const entry: JsonObject = { command: m.command }
+      if (m.when !== undefined) {
+        // Serialize the `WhenAst` to VS Code's canonical clause string. This
+        // is the first codegen consumer of the when builder's codec.
+        entry['when'] = Schema.encodeSync(WhenClause)(m.when)
+      }
+      if (m.group !== undefined) entry['group'] = m.group
+      ;(menus[m.location] ??= []).push(entry)
+    }
+    contributes['menus'] = menus
   }
 
   if (Object.keys(contributes).length > 0) {

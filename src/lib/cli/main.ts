@@ -18,7 +18,7 @@ Subcommands:
   test         Run tests (shorthand for \`bun test\`)
   lint         Run oxlint with --type-aware --deny-warnings
   typecheck    Run tsgo
-  check        Run lint, typecheck, and test in sequence
+  check        Run lint, typecheck, test, and the package.json drift guard
   discover     Print instructions for discovering VSCode commands/context keys
 
 Options:

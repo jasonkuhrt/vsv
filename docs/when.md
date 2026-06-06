@@ -29,7 +29,7 @@ const ast = $.and(
 )
 
 const clause: string = Schema.encodeSync(WhenClause)(ast)
-// → "(activeCustomEditorId == 'vscode.markdown.preview.editor') && (!(ext.ready))"
+// → "activeCustomEditorId == 'vscode.markdown.preview.editor' && !ext.ready"
 ```
 
 ## Two layers
@@ -72,18 +72,18 @@ recurse via `ParseResult.encode(WhenClause)` and
 
 ## AST variants
 
-| TaggedClass     | VS Code clause                | Description                              |
-| --------------- | ----------------------------- | ---------------------------------------- |
-| `WhenBoolKey`   | `editorTextFocus`             | Bare key — truthy reference              |
-| `WhenEq`        | `key == 'value'`              | Equality against a string/number/boolean |
-| `WhenNeq`       | `key != 'value'`              | Inequality                               |
-| `WhenMatch`     | `key =~ /pattern/flags`       | Regex match on the key's value           |
-| `WhenIn`        | `key in setName`              | Set membership                           |
-| `WhenCmp`       | `count >= 1`                  | Numeric comparison                       |
-| `WhenNot`       | `!(expr)`                     | Negation                                 |
-| `WhenAnd`       | `(t1) && (t2) && …`           | Conjunction                              |
-| `WhenOr`        | `(t1) \|\| (t2) \|\| …`       | Disjunction                              |
-| `WhenUnsafeRaw` | arbitrary text passed through | Escape hatch for unsupported grammar     |
+| TaggedClass     | VS Code clause                | Description                                      |
+| --------------- | ----------------------------- | ------------------------------------------------ |
+| `WhenBoolKey`   | `editorTextFocus`             | Bare key — truthy reference                      |
+| `WhenEq`        | `key == 'value'`              | Equality against a string/number/boolean         |
+| `WhenNeq`       | `key != 'value'`              | Inequality                                       |
+| `WhenMatch`     | `key =~ /pattern/flags`       | Regex match on the key's value                   |
+| `WhenIn`        | `key in setName`              | Set membership                                   |
+| `WhenCmp`       | `count >= 1`                  | Numeric comparison                               |
+| `WhenNot`       | `!key` / `!(expr)`            | Negation — bare for a key, parens for a compound |
+| `WhenAnd`       | `t1 && t2 && …`               | Conjunction                                      |
+| `WhenOr`        | `t1 \|\| t2 \|\| …`           | Disjunction                                      |
+| `WhenUnsafeRaw` | arbitrary text passed through | Escape hatch for unsupported grammar             |
 
 Every variant is a `Schema.TaggedClass` — pattern-match with
 `Match.tag('WhenAnd', ...)`, narrow via `_tag === 'WhenAnd'`, construct
@@ -91,17 +91,42 @@ via `.make({ ... })`.
 
 ## Canonical form
 
-Encoding fully parenthesizes all combinator children — no operator
-precedence ambiguity, no formatting drift. Round-trip is structurally
-preserving:
+Encoding emits **minimal, precedence-aware parentheses** — the canonical
+idiomatic form VS Code itself writes. The grammar precedence, loosest →
+tightest, is:
+
+```
+||   <   &&   <   !   <   atoms / (…)
+```
+
+A combinator child is parenthesized **only** when leaving it bare would let
+the parent's parser re-associate it. Everything else renders without parens:
+
+| AST                 | Encoded           | Why                                            |
+| ------------------- | ----------------- | ---------------------------------------------- |
+| `And(a, b)`         | `a && b`          | atoms bind tighter than `&&` — no parens       |
+| `Not(BoolKey('x'))` | `!x`              | `!` of a bare key — VS Code's own `!key` form  |
+| `Not(Eq('a','b'))`  | `!(a == 'b')`     | `!` binds tighter than `==`; fence it          |
+| `Or(And(a, b), c)`  | `a && b \|\| c`   | `&&` binds tighter than `\|\|` — `And` is bare |
+| `And(a, Or(b, c))`  | `a && (b \|\| c)` | `\|\|` binds looser than `&&` — fence it       |
+| `And(a, And(b, c))` | `a && (b && c)`   | same operator — fence to keep nesting          |
 
 ```ts
 const back = Schema.decodeUnknownSync(WhenClause)(Schema.encodeSync(WhenClause)(ast))
-// back deeply equals ast
+// back deeply equals ast — minimal parens still round-trip structurally
 ```
 
-Decode is operator-precedence aware: `Or` binds looser than `And`, both
-looser than `Not`. `a && b || c` decodes as `Or(And(a, b), c)`.
+`encode` is **stable / idempotent**: `encode(decode(encode(ast)))` byte-equals
+`encode(ast)`. Because the emitted form is exactly the minimal idiomatic form,
+a clause VS Code (or a human) already wrote in that form survives
+`decode → encode` **byte-for-byte unchanged** — proven against the live
+`keybindings.json` corpus in `tests/acceptance-live.test.ts`.
+
+Decode is the same operator-precedence aware grammar: `Or` binds looser than
+`And`, both looser than `Not`. `a && b || c` decodes as `Or(And(a, b), c)`.
+Decode accepts both the minimal form and any over-parenthesized input — parens
+are optional in parsing — so a fully-parenthesized legacy clause still decodes
+to the same AST.
 
 ## `When(manifest)` builder
 
@@ -117,7 +142,7 @@ context keys (owned via `contextKeys`, consumed via
 | `$.match(key, pattern, flag?)` | `WhenMatch`     | open string | Regex match — only keys typed `Schema.String` |
 | `$.lt` / `lte` / `gt` / `gte`  | `WhenCmp`       | numeric     | `key < n` etc. — only numeric-valued keys     |
 | `$.in(key, set)`               | `WhenIn`        | any         | `key in set` — both are declared context keys |
-| `$.not(inner)`                 | `WhenNot`       | —           | Wraps any `WhenAst`                           |
+| `$.not(inner)`                 | `WhenNot`       | —           | Negates any `WhenAst` — `!key` or `!(expr)`   |
 | `$.and(a, b, …)`               | `WhenAnd`       | —           | Conjunction — requires at least two terms     |
 | `$.or(a, b, …)`                | `WhenOr`        | —           | Disjunction — requires at least two terms     |
 | `$.unsafe.raw(text)`           | `WhenUnsafeRaw` | —           | Escape hatch — encoded verbatim, no parse     |
@@ -207,10 +232,16 @@ canonicalizes, every subsequent one is a fixpoint.
 ### Guards
 
 - `tests/property.test.ts` — fast-check round-trip over a hand-built
-  generator of well-formed ASTs, plus the total structural codec.
+  generator of well-formed ASTs (`decode(encode(ast))` preserves the AST and
+  `encode` is idempotent), plus the total structural codec.
 - `tests/fixtures.test.ts` — real `when`-clauses harvested from VS Code's
   bundled extensions; each must decode to a typed tree (no `WhenUnsafeRaw`)
   and re-decode to a fixpoint.
+- `tests/acceptance-live.test.ts` — every distinct `when` clause from the
+  user's live `keybindings.json` must round-trip `decode → encode`
+  byte-for-byte. A committed corpus (`live-keybindings-corpus.json`) makes
+  this a durable machine-independent fence; the live file is additionally
+  re-checked when present (gate with `VSV_REQUIRE_LIVE_KEYBINDINGS=1`).
 
 ## Design
 

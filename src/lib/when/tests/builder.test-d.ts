@@ -10,6 +10,7 @@ import { describe, expectTypeOf, test } from 'vitest'
 import { ContextKeyDecl } from '#lib/manifest/decls/context-key'
 import { ExternalContextKeyDecl } from '#lib/manifest/decls/external-context-key'
 import { defineManifest } from '#lib/manifest/define'
+import { OpenEnum } from '#lib/schema/open-enum'
 import {
   type ContextKeyName,
   type ContextKeyValue,
@@ -19,6 +20,13 @@ import {
   type WhenBuilder,
 } from '#lib/when/builder'
 import type { WhenAst } from '#lib/when/when'
+
+// An `OpenEnum`-typed value domain: known core members, open at runtime.
+const EditorLangId = OpenEnum('editorLangId', {
+  typescript: 'typescript',
+  javascript: 'javascript',
+  markdown: 'markdown',
+})
 
 // Context keys spanning every value domain the builder discriminates.
 const m = defineManifest({
@@ -30,6 +38,7 @@ const m = defineManifest({
     ContextKeyDecl({ name: 'ck.str', valueType: Schema.String }),
     ContextKeyDecl({ name: 'ck.num', valueType: Schema.Number }),
     ContextKeyDecl({ name: 'ck.numEnum', valueType: Schema.Literal(1, 2) }),
+    ContextKeyDecl({ name: 'ck.openEnum', valueType: EditorLangId }),
   ],
   externalContextKeys: [
     ExternalContextKeyDecl({ name: 'eck.str', valueType: Schema.String }),
@@ -44,7 +53,7 @@ type M = typeof m
 // Fixture canary — see registries.test-d.ts.
 describe('fixture', () => {
   test('contextKeys captured as a fixed-length tuple', () => {
-    expectTypeOf<M['contextKeys']['length']>().toEqualTypeOf<5>()
+    expectTypeOf<M['contextKeys']['length']>().toEqualTypeOf<6>()
   })
 })
 
@@ -53,7 +62,14 @@ describe('fixture', () => {
 describe('ContextKeyName', () => {
   test('unions owned + external context-key names', () => {
     expectTypeOf<ContextKeyName<M>>().toEqualTypeOf<
-      'ck.bool' | 'ck.enum' | 'ck.str' | 'ck.num' | 'ck.numEnum' | 'eck.str' | 'eck.merged'
+      | 'ck.bool'
+      | 'ck.enum'
+      | 'ck.str'
+      | 'ck.num'
+      | 'ck.numEnum'
+      | 'ck.openEnum'
+      | 'eck.str'
+      | 'eck.merged'
     >()
   })
 
@@ -76,6 +92,16 @@ describe('ContextKeyValue', () => {
 
   test('merges same-named decls into the value union', () => {
     expectTypeOf<ContextKeyValue<M, 'eck.merged'>>().toEqualTypeOf<'x' | 'y'>()
+  })
+
+  test('an OpenEnum key decodes to the tagged read struct — NOT the authoring union', () => {
+    // `ContextKeyValue` is the *read* (decoded) domain: the tagged
+    // parse-don't-validate struct. The *authoring* projection (the bare
+    // string union) is asserted on the `eq` value argument below, not here.
+    expectTypeOf<ContextKeyValue<M, 'ck.openEnum'>>().toEqualTypeOf<
+      | { readonly value: 'typescript' | 'javascript' | 'markdown' }
+      | { readonly found: string; readonly value: 'unknown' }
+    >()
   })
 })
 
@@ -136,6 +162,45 @@ describe('eq', () => {
     $.eq('eck.merged', 'y')
     // @ts-expect-error -- 'z' was declared by neither 'eck.merged' decl
     $.eq('eck.merged', 'z')
+  })
+
+  test('an OpenEnum key autocompletes known members AND accepts any string', () => {
+    // Known core members type-check (these are the autocomplete suggestions).
+    $.eq('ck.openEnum', 'typescript')
+    $.eq('ck.openEnum', 'javascript')
+    $.eq('ck.openEnum', 'markdown')
+    // An unmodeled value is still accepted — a `when` clause may legitimately
+    // compare a value outside the core membership. This is the decisive
+    // contrast with the closed `ck.enum` literal key below.
+    $.eq('ck.openEnum', 'some-language-not-in-the-core-set')
+    // The tagged read struct is NOT a valid authoring argument.
+    // @ts-expect-error -- the decoded struct is for *reading*, not authoring
+    $.eq('ck.openEnum', { value: 'typescript' })
+    // The value argument is the bare known union widened with an open-string
+    // escape — `string & {}` keeps the literal suggestions while admitting any
+    // string. (A boolean/number is still rejected: the domain is string-only.)
+    expectTypeOf<Parameters<typeof $.eq<'ck.openEnum'>>[1]>().toEqualTypeOf<
+      'typescript' | 'javascript' | 'markdown' | (string & {})
+    >()
+    // @ts-expect-error -- the OpenEnum authoring domain is string-only
+    $.eq('ck.openEnum', 42)
+  })
+
+  test('a closed Literal key still rejects non-members (no open-string escape)', () => {
+    // The contrast that proves the OpenEnum escape is specific to OpenEnum
+    // keys: a plain `Schema.Literal` key keeps its closed union and rejects
+    // any string outside it.
+    $.eq('ck.enum', 'a')
+    // @ts-expect-error -- 'nope' is not a declared literal; closed keys have no open escape
+    $.eq('ck.enum', 'nope')
+  })
+
+  test('a Boolean key still takes a boolean', () => {
+    $.eq('ck.bool', true)
+    $.eq('ck.bool', false)
+    expectTypeOf<Parameters<typeof $.eq<'ck.bool'>>[1]>().toEqualTypeOf<boolean>()
+    // @ts-expect-error -- a boolean key rejects a string value
+    $.eq('ck.bool', 'true')
   })
 })
 

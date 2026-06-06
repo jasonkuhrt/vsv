@@ -280,6 +280,49 @@ const splitTopLevel = (s: string, sep: '&&' | '||'): ReadonlyArray<string> => {
 const failType = (schema: Schema.Schema.Any, actual: unknown, message: string) =>
   ParseResult.fail(new ParseResult.Type(schema.ast, actual, message))
 
+// ─── Encode-side parenthesization (minimal, precedence-aware) ─────────────
+
+// VS Code's when-grammar precedence, loosest → tightest:
+//   `||`  <  `&&`  <  `!`  <  atoms / `(…)`
+// (parser methods `_or` → `_and` → `_term` → `_primary` in VS Code's
+// `contextkey.ts`). The encoder emits the MINIMAL parenthesization that still
+// round-trips: a combinator child is wrapped ONLY when rendering it bare would
+// let the parent's parser re-associate it — i.e. when the child binds looser
+// than, or equally-and-associatively into, the parent context. This is the
+// canonical idiomatic form VS Code itself writes (its runtime serializers emit
+// `a && b` / `a || b` with no per-term parens, and `!key` with no parens).
+//
+// vsv, unlike VS Code's runtime, does NOT distribute `&&` over `||` into DNF
+// (contextkey.ts:1714 "We must distribute any OR expression because we don't
+// support parens"). vsv keeps the nested tree, so it DOES need parens to fence
+// an `Or` term sitting under an `And` (and to fence same-operator nesting that
+// would otherwise flatten on re-parse) — that's the only reason any paren is
+// emitted.
+
+const PREC_OR = 0
+const PREC_AND = 1
+const PREC_TIGHT = 2 // atoms, `!`, and the catch-all raw escape hatch
+
+/** The when-grammar precedence level a node binds at. */
+const precedenceOf = (ast: WhenAst): number => {
+  if (ast._tag === 'WhenOr') return PREC_OR
+  if (ast._tag === 'WhenAnd') return PREC_AND
+  return PREC_TIGHT
+}
+
+/**
+ * Wrap an already-encoded combinator child in parens iff leaving it bare would
+ * change the decoded structure. `parentPrec` is the parent combinator's own
+ * precedence; a child is fenced when it binds looser than the parent, or when
+ * it is the *same* associative operator (bare nesting would flatten on
+ * re-parse), or when it is a `WhenUnsafeRaw` (its arbitrary text may carry
+ * top-level `&&`/`||`/`!` the parent split would absorb).
+ */
+const wrapChild = (parentPrec: number, child: WhenAst, encoded: string): string => {
+  if (child._tag === 'WhenUnsafeRaw') return `(${encoded})`
+  return precedenceOf(child) <= parentPrec ? `(${encoded})` : encoded
+}
+
 // ─── TaggedClasses (the structural AST) ──────────────────────────────────
 
 export class WhenBoolKey extends Schema.TaggedClass<WhenBoolKey>()('WhenBoolKey', {
@@ -485,7 +528,13 @@ const WhenNotClause: Schema.Schema<WhenNot, string> = Schema.transformOrFail(
     encode: ({ inner }) =>
       pipe(
         ParseResult.encode(WhenClause)(inner),
-        Effect.map((s) => `!(${s})`),
+        // `!` binds tightest. VS Code emits `!key` (no parens) when negating a
+        // bare key — its own `ContextKeyNotExpr.serialize()` is `!${key}`
+        // (contextkey.ts:1163) — and `!(expr)` for any compound. The bare form
+        // is sound only for `WhenBoolKey`: VS Code's `_term` lets `!` grab a
+        // KEY directly but nothing else, so `!a == b` would parse as
+        // `(!a) == b`, not `!(a == b)`. Everything else gets the paren envelope.
+        Effect.map((s) => (inner._tag === 'WhenBoolKey' ? `!${s}` : `!(${s})`)),
       ),
   },
 )
@@ -507,8 +556,16 @@ const WhenAndClause: Schema.Schema<WhenAnd, string> = Schema.transformOrFail(
     },
     encode: ({ terms }) =>
       pipe(
-        Effect.forEach(terms, (t) => ParseResult.encode(WhenClause)(t)),
-        Effect.map((parts) => parts.map((p) => `(${p})`).join(' && ')),
+        // Minimal parens: fence only `Or` terms (looser) and nested `And`
+        // terms (same operator — bare nesting would flatten on re-parse).
+        // Atoms, `!`-negations, and `UnsafeRaw` are handled by `wrapChild`.
+        Effect.forEach(terms, (t) =>
+          pipe(
+            ParseResult.encode(WhenClause)(t),
+            Effect.map((s) => wrapChild(PREC_AND, t, s)),
+          ),
+        ),
+        Effect.map((parts) => parts.join(' && ')),
       ),
   },
 )
@@ -525,8 +582,16 @@ const WhenOrClause: Schema.Schema<WhenOr, string> = Schema.transformOrFail(Schem
   },
   encode: ({ terms }) =>
     pipe(
-      Effect.forEach(terms, (t) => ParseResult.encode(WhenClause)(t)),
-      Effect.map((parts) => parts.map((p) => `(${p})`).join(' || ')),
+      // Minimal parens: `&&`, `!`, and atoms all bind tighter than `||`, so
+      // they render bare. Only a nested `Or` term (same operator) is fenced,
+      // to keep it from flattening into the parent on re-parse.
+      Effect.forEach(terms, (t) =>
+        pipe(
+          ParseResult.encode(WhenClause)(t),
+          Effect.map((s) => wrapChild(PREC_OR, t, s)),
+        ),
+      ),
+      Effect.map((parts) => parts.join(' || ')),
     ),
 })
 
@@ -550,19 +615,28 @@ const WhenUnsafeRawClause = Schema.transformOrFail(Schema.String, WhenUnsafeRaw,
  *
  * **This codec is a normalizer, not an identity round-trip.** `decode` is
  * many-to-one: several distinct strings collapse to the same AST, and
- * `encode` always emits one canonical form. Specifically —
+ * `encode` always emits one canonical form — the MINIMAL, precedence-aware
+ * parenthesization VS Code itself writes (`||` < `&&` < `!` < atoms).
+ * Specifically —
  *
- * - **Redundant parens are dropped.** `(a)` decodes to `WhenBoolKey('a')`;
- *   re-encoding emits `a`. Combinators always re-emit their own minimal
- *   parens (`(t1) && (t2)`).
+ * - **Parens are minimal.** A combinator child is fenced only when leaving it
+ *   bare would let the parent re-associate it: an `Or` under an `And`
+ *   (`a && (b || c)`), or same-operator nesting that would flatten
+ *   (`a && (b && c)`). Atoms and bare-key negations render without parens
+ *   (`a && b`, `!inputFocus`). Redundant parens in the INPUT are dropped:
+ *   `(a)` decodes to `WhenBoolKey('a')`, re-encoding emits `a`.
  * - **Bare-word RHS becomes quoted.** `a == b` decodes to
  *   `WhenEq('a', 'b')` — VS Code treats an unquoted RHS word as a string —
  *   and re-encodes as `a == 'b'`.
  * - **Whitespace is normalized** to the canonical single-space form.
  *
  * So `decode(encode(decode(s)))` equals `decode(s)`: the first round-trip
- * canonicalizes, every subsequent one is a fixpoint. The property tests in
- * `tests/property.test.ts` enforce this.
+ * canonicalizes, every subsequent one is a fixpoint, and `encode` is stable
+ * (`encode(decode(encode(ast)))` byte-equals `encode(ast)`). A clause already
+ * in the minimal idiomatic form (everything VS Code/humans write in
+ * `keybindings.json`) survives `decode → encode` byte-for-byte. The property
+ * tests in `tests/property.test.ts` and the live corpus in
+ * `tests/acceptance-live.test.ts` enforce this.
  *
  * @example
  * ```ts

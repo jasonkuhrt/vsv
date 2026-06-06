@@ -18,7 +18,9 @@ import { ContextKeyDecl } from '#lib/manifest/decls/context-key'
 import { ExternalCommandDecl } from '#lib/manifest/decls/external-command'
 import { ExternalContextKeyDecl } from '#lib/manifest/decls/external-context-key'
 import { ForeignConfigDecl } from '#lib/manifest/decls/foreign-config'
+import { MenuDecl } from '#lib/manifest/decls/menu'
 import { StateDecl } from '#lib/manifest/decls/state'
+import { WhenBoolKey } from '#lib/when/when'
 
 type DecodedOf<S> = S extends Schema.Schema.AnyNoContext ? Schema.Schema.Type<S> : never
 
@@ -141,5 +143,29 @@ describe('StateDecl factory', () => {
   test('rejects an unknown scope', () => {
     // @ts-expect-error -- 'session' is not a valid scope
     StateDecl({ key: 'st.x', scope: 'session', valueSchema: Schema.Number })
+  })
+})
+
+describe('MenuDecl factory', () => {
+  test('captures location + command literals', () => {
+    const d = MenuDecl({
+      location: 'explorer/context',
+      command: 'ext.delete',
+      when: WhenBoolKey.make({ key: 'explorerResourceIsFolder' }),
+      group: 'navigation',
+    })
+    expectTypeOf(d.location).toEqualTypeOf<'explorer/context'>()
+    expectTypeOf(d.command).toEqualTypeOf<'ext.delete'>()
+  })
+
+  test('when/group are optional', () => {
+    const d = MenuDecl({ location: 'commandPalette', command: 'ext.run' })
+    expectTypeOf(d.location).toEqualTypeOf<'commandPalette'>()
+    expectTypeOf(d.command).toEqualTypeOf<'ext.run'>()
+  })
+
+  test('rejects a non-WhenAst when', () => {
+    // @ts-expect-error -- a raw string is not a WhenAst (must be built via When(manifest))
+    MenuDecl({ location: 'commandPalette', command: 'ext.run', when: 'inputFocus' })
   })
 })

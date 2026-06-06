@@ -1,6 +1,13 @@
 import { Schema } from 'effect'
 import { describe, expect, test } from 'bun:test'
-import { CommandDecl, ConfigDecl, ForeignConfigDecl, Manifest } from '../../manifest/schema.ts'
+import {
+  CommandDecl,
+  ConfigDecl,
+  ForeignConfigDecl,
+  Manifest,
+  MenuDecl,
+} from '../../manifest/schema.ts'
+import { WhenAnd, WhenBoolKey, WhenNot } from '../../when/when.ts'
 import { mergeManifestIntoPackageJson } from '../sync-package-json.ts'
 
 describe('mergeManifestIntoPackageJson', () => {
@@ -120,5 +127,101 @@ describe('mergeManifestIntoPackageJson', () => {
     expect(merged['main']).toBe('./out/extension.js')
     expect(merged['bin']).toEqual({ ext: './bin/cli.js' })
     expect(merged['exports']).toEqual({ '.': './out/index.js' })
+  })
+
+  test('emits contributes.menus from manifest.menus, encoding the WhenAst', () => {
+    // when = explorerResourceIsFolder && !inputFocus
+    const when = WhenAnd.make({
+      terms: [
+        WhenBoolKey.make({ key: 'explorerResourceIsFolder' }),
+        WhenNot.make({ inner: WhenBoolKey.make({ key: 'inputFocus' }) }),
+      ],
+    })
+    const m = Manifest.make({
+      name: 'ext',
+      publisher: 'jasonkuhrt',
+      menus: [
+        MenuDecl({
+          location: 'explorer/context',
+          command: 'ext.deleteFolder',
+          when,
+          group: 'navigation',
+        }),
+      ],
+    })
+    const merged = mergeManifestIntoPackageJson(m, {})
+    const contributes = merged['contributes'] as {
+      menus: Record<string, Array<Record<string, unknown>>>
+    }
+    expect(contributes.menus).toEqual({
+      'explorer/context': [
+        {
+          command: 'ext.deleteFolder',
+          // The WhenAst is serialized to VS Code's canonical clause syntax —
+          // minimal, precedence-aware parens (atoms and bare-key negations
+          // need none), the idiomatic form VS Code itself emits.
+          when: 'explorerResourceIsFolder && !inputFocus',
+          group: 'navigation',
+        },
+      ],
+    })
+  })
+
+  test('omits when/group when a MenuDecl declares neither', () => {
+    const m = Manifest.make({
+      name: 'ext',
+      publisher: 'jasonkuhrt',
+      menus: [MenuDecl({ location: 'commandPalette', command: 'ext.run' })],
+    })
+    const merged = mergeManifestIntoPackageJson(m, {})
+    const contributes = merged['contributes'] as {
+      menus: Record<string, Array<Record<string, unknown>>>
+    }
+    expect(contributes.menus).toEqual({ commandPalette: [{ command: 'ext.run' }] })
+  })
+
+  test('groups multiple MenuDecls by location, preserving declared order', () => {
+    const m = Manifest.make({
+      name: 'ext',
+      publisher: 'jasonkuhrt',
+      menus: [
+        MenuDecl({ location: 'editor/title', command: 'ext.first' }),
+        MenuDecl({ location: 'explorer/context', command: 'ext.folder' }),
+        MenuDecl({ location: 'editor/title', command: 'ext.second' }),
+      ],
+    })
+    const merged = mergeManifestIntoPackageJson(m, {})
+    const contributes = merged['contributes'] as {
+      menus: Record<string, Array<Record<string, unknown>>>
+    }
+    expect(contributes.menus).toEqual({
+      'editor/title': [{ command: 'ext.first' }, { command: 'ext.second' }],
+      'explorer/context': [{ command: 'ext.folder' }],
+    })
+  })
+
+  test('coexists with commands/configuration and spread-preserves un-modeled contributes keys', () => {
+    const m = Manifest.make({
+      name: 'ext',
+      publisher: 'jasonkuhrt',
+      commands: [
+        CommandDecl({ id: 'ext.run', args: Schema.Void, result: Schema.Void, title: 'Run' }),
+      ],
+      menus: [MenuDecl({ location: 'commandPalette', command: 'ext.run' })],
+    })
+    // key-binder owns keybindings (spec §0) — codegen must not clobber them.
+    const existing = { contributes: { keybindings: [{ command: 'ext.run', key: 'ctrl+r' }] } }
+    const merged = mergeManifestIntoPackageJson(m, existing)
+    const contributes = merged['contributes'] as Record<string, unknown>
+    expect(contributes['commands']).toEqual([{ command: 'ext.run', title: 'Run' }])
+    expect(contributes['menus']).toEqual({ commandPalette: [{ command: 'ext.run' }] })
+    expect(contributes['keybindings']).toEqual([{ command: 'ext.run', key: 'ctrl+r' }])
+  })
+
+  test('no menus key emitted when manifest.menus is empty/absent', () => {
+    const m = Manifest.make({ name: 'ext', publisher: 'jasonkuhrt', menus: [] })
+    const merged = mergeManifestIntoPackageJson(m, {})
+    const contributes = (merged['contributes'] as { menus?: unknown } | undefined) ?? undefined
+    expect(contributes?.menus).toBeUndefined()
   })
 })
