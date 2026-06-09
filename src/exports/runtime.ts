@@ -1,4 +1,6 @@
 export { createRuntime } from '#lib/runtime/create'
+export { Layout } from '#lib/runtime/layout'
+export type { LayoutFocusTarget } from '#lib/runtime/layout'
 export {
   ClipboardError,
   CommandExecutionError,
