@@ -71,7 +71,7 @@
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.2",
     "@effect/tsgo": "0.67.5",
-    "@jasonkuhrt/config-presets": "file:../config-presets",
+    "@jasonkuhrt/config-presets": "0.1.0",
     "@types/bun": "1.4.4",
     "@types/node": "^25.3.5",
     "@types/vscode": "^1.100.0",
