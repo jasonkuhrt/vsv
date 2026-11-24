@@ -6,29 +6,35 @@ Extensions author clauses against a manifest-typed builder; vsv produces
 the canonical clause string only at the serialization boundary.
 
 ```ts
-import { defineManifest, ContextKeyDecl, ExternalContextKeyDecl } from '@jasonkuhrt/vsv/manifest'
-import { When, WhenClause } from '@jasonkuhrt/vsv/when'
-import { Schema } from 'effect'
+import { Schema } from 'effect';
+import {
+  defineManifest,
+  ContextKeyDecl,
+  ExternalContextKeyDecl,
+} from '@jasonkuhrt/vsv/manifest';
+import { When, WhenClause } from '@jasonkuhrt/vsv/when';
 
 const manifest = defineManifest({
   name: 'ext',
   publisher: 'jasonkuhrt',
-  contextKeys: [ContextKeyDecl({ name: 'ext.ready', valueType: Schema.Boolean })],
+  contextKeys: [
+    ContextKeyDecl({ name: 'ext.ready', valueType: Schema.Boolean }),
+  ],
   externalContextKeys: [
     ExternalContextKeyDecl({
       name: 'activeCustomEditorId',
       valueType: Schema.Literal('vscode.markdown.preview.editor'),
     }),
   ],
-})
+});
 
-const $ = When(manifest)
+const $ = When(manifest);
 const ast = $.and(
   $.eq('activeCustomEditorId', 'vscode.markdown.preview.editor'),
   $.not($.is('ext.ready')),
-)
+);
 
-const clause: string = Schema.encodeSync(WhenClause)(ast)
+const clause: string = Schema.encodeSync(WhenClause)(ast);
 // → "activeCustomEditorId == 'vscode.markdown.preview.editor' && !ext.ready"
 ```
 
@@ -41,8 +47,8 @@ tagged-struct shape; useful when you want to manipulate, JSON-serialize,
 or pattern-match the AST without touching string syntax.
 
 ```ts
-import { WhenAstStruct, type WhenAst } from '@jasonkuhrt/vsv/when'
-import { Schema } from 'effect'
+import { Schema } from 'effect';
+import { WhenAstStruct, type WhenAst } from '@jasonkuhrt/vsv/when';
 
 const ast: WhenAst = Schema.decodeUnknownSync(WhenAstStruct)({
   _tag: 'WhenAnd',
@@ -50,7 +56,7 @@ const ast: WhenAst = Schema.decodeUnknownSync(WhenAstStruct)({
     { _tag: 'WhenBoolKey', key: 'a' },
     { _tag: 'WhenBoolKey', key: 'b' },
   ],
-})
+});
 ```
 
 ### `WhenClause` — bidirectional string codec
@@ -60,8 +66,10 @@ Layered on top of `WhenAstStruct` via per-variant
 syntax), decoded form is `WhenAst`.
 
 ```ts
-const ast = Schema.decodeUnknownSync(WhenClause)("editorLangId == 'markdown' && !inputFocus")
-const text = Schema.encodeSync(WhenClause)(ast)
+const ast = Schema.decodeUnknownSync(WhenClause)(
+  "editorLangId == 'markdown' && !inputFocus",
+);
+const text = Schema.encodeSync(WhenClause)(ast);
 ```
 
 No `serializeWhen` or `parseWhenClause` helper is exported — the schema
@@ -112,7 +120,9 @@ the parent's parser re-associate it. Everything else renders without parens:
 | `And(a, And(b, c))` | `a && (b && c)`   | same operator — fence to keep nesting          |
 
 ```ts
-const back = Schema.decodeUnknownSync(WhenClause)(Schema.encodeSync(WhenClause)(ast))
+const back = Schema.decodeUnknownSync(WhenClause)(
+  Schema.encodeSync(WhenClause)(ast),
+);
 // back deeply equals ast — minimal parens still round-trip structurally
 ```
 
@@ -160,26 +170,26 @@ operators. The "Key domain" column above is enforced on each operator's
 `key` argument:
 
 ```ts
-const $ = When(manifest)
+const $ = When(manifest);
 
-$.eq('ext.ready', true) // ✓ boolean key, boolean value
+$.eq('ext.ready', true); // ✓ boolean key, boolean value
 // @ts-expect-error -- 'ext.ready' is boolean; a string is not in its domain
-$.eq('ext.ready', 'yes')
+$.eq('ext.ready', 'yes');
 
-$.match('editorLangId', 'md') // ✓ editorLangId is Schema.String
+$.match('editorLangId', 'md'); // ✓ editorLangId is Schema.String
 // @ts-expect-error -- 'ext.ready' is boolean, not an open-string key
-$.match('ext.ready', 'md')
+$.match('ext.ready', 'md');
 
-$.gt('ext.lineCount', 10) // ✓ ext.lineCount is Schema.Number
+$.gt('ext.lineCount', 10); // ✓ ext.lineCount is Schema.Number
 // @ts-expect-error -- 'editorLangId' is a string key, not numeric
-$.gt('editorLangId', 10)
+$.gt('editorLangId', 10);
 ```
 
 A typo on a context-key name is likewise a compile error:
 
 ```ts
 // @ts-expect-error -- 'redy' is not declared
-$.is('ext.redy')
+$.is('ext.redy');
 ```
 
 ### Domain merging

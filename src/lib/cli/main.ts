@@ -1,11 +1,13 @@
-import { check } from './commands/check.ts'
-import { dev } from './commands/dev.ts'
-import { discover } from './commands/discover.ts'
-import { lint } from './commands/lint.ts'
-import { test } from './commands/test.ts'
-import { typecheck } from './commands/typecheck.ts'
+import { Effect } from 'effect';
+import { check } from './commands/check.ts';
+import { dev } from './commands/dev.ts';
+import { discover } from './commands/discover.ts';
+import { lint } from './commands/lint.ts';
+import { test } from './commands/test.ts';
+import { typecheck } from './commands/typecheck.ts';
+import { stderr, stdout } from './output.ts';
 
-const VERSION = '0.0.0'
+const VERSION = '0.0.0';
 
 const HELP_TEXT = `\
 vsv — VSCode extension authoring SDK (${VERSION})
@@ -17,7 +19,7 @@ Subcommands:
   dev          Load manifest, run codegen, emit bootstrap, watch for changes
   test         Run tests (shorthand for \`bun test\`)
   lint         Run oxlint with --type-aware --deny-warnings
-  typecheck    Run tsgo
+  typecheck    Run tsrs
   check        Run lint, typecheck, test, and the package.json drift guard
   discover     Print instructions for discovering VSCode commands/context keys
 
@@ -27,40 +29,47 @@ Options:
 
 Options specific to \`vsv dev\`:
   --once       Run codegen + bootstrap once, then exit (no watch)
-`
+`;
 
-export const runCli = async (argv: readonly string[]): Promise<number> => {
-  const [subcommand, ...rest] = argv
+export const runCli = Effect.fnUntraced(function* (
+  argv: ReadonlyArray<string>,
+  entrypoint: string,
+) {
+  const [subcommand, ...rest] = argv;
 
-  if (subcommand === undefined || subcommand === '--help' || subcommand === '-h') {
-    process.stdout.write(HELP_TEXT)
-    return 0
+  if (
+    subcommand === undefined ||
+    subcommand === '--help' ||
+    subcommand === '-h'
+  ) {
+    yield* stdout(HELP_TEXT);
+    return 0;
   }
 
   if (subcommand === '--version') {
-    process.stdout.write(`${VERSION}\n`)
-    return 0
+    yield* stdout(`${VERSION}\n`);
+    return 0;
   }
 
   switch (subcommand) {
     case 'dev': {
-      const once = rest.includes('--once')
-      await dev({ once })
-      return 0
+      const once = rest.includes('--once');
+      yield* dev({ once, entrypoint });
+      return 0;
     }
     case 'test':
-      return test(rest)
+      return yield* test(rest);
     case 'lint':
-      return lint(rest)
+      return yield* lint(rest);
     case 'typecheck':
-      return typecheck(rest)
+      return yield* typecheck(rest);
     case 'check':
-      return check()
+      return yield* check();
     case 'discover':
-      return discover()
+      return yield* discover;
     default:
-      process.stderr.write(`vsv: unknown subcommand "${subcommand}"\n`)
-      process.stderr.write(HELP_TEXT)
-      return 1
+      yield* stderr(`vsv: unknown subcommand "${subcommand}"\n`);
+      yield* stderr(HELP_TEXT);
+      return 1;
   }
-}
+});

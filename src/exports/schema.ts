@@ -1,1 +1,1 @@
-export { OpenEnum } from '#lib/schema/open-enum'
+export { OpenEnum } from '#lib/schema/open-enum';

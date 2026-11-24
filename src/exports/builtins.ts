@@ -3,8 +3,8 @@
 // packaging + purity guarantees, since `src/lib/builtins/**` imports only
 // `effect`, `#lib/manifest`, and the inlined `#lib/schema/open-enum`.
 
-export { builtinsManifest } from '#lib/builtins/manifest'
-export { coreCommands } from '#lib/builtins/commands'
+export { builtinsManifest } from '#lib/builtins/manifest';
+export { coreCommands } from '#lib/builtins/commands';
 export {
   booleanContextKeys,
   closedStringContextKeys,
@@ -13,4 +13,4 @@ export {
   openEnumContextKeys,
   openStringContextKeys,
   plainStringContextKeys,
-} from '#lib/builtins/context-keys'
+} from '#lib/builtins/context-keys';

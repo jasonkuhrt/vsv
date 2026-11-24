@@ -1,3 +1,2 @@
 [test]
 coverageSkipTestFiles = true
-preload = ["./src/lib/runtime-test/preload.ts"]

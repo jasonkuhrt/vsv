@@ -1,5 +1,8 @@
-export const discover = (): number => {
-  process.stdout.write(`\
+import { Effect } from 'effect';
+import { stdout } from '../output.ts';
+
+export const discover = Effect.as(
+  stdout(`\
 vsv discover — manual workflow
 
 To discover the live list of VSCode commands and context keys available in a
@@ -18,6 +21,6 @@ running extension host, do this by hand (v1 does not automate it):
 
 Paste the results into your manifest's builtin-catalog overrides, or submit a
 PR to @jasonkuhrt/vsv to expand the default catalog.
-`)
-  return 0
-}
+`),
+  0,
+);

@@ -5,8 +5,16 @@
     "rootDir": "src",
     "noEmit": false,
     "allowImportingTsExtensions": false,
-    "rewriteRelativeImportExtensions": true
+    "rewriteRelativeImportExtensions": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "tsBuildInfoFile": "node_modules/.cache/build.tsbuildinfo"
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.*", "src/**/*.test-d.*"]
+  "exclude": [
+    "src/**/*.test.*",
+    "src/**/*.test-d.*",
+    "src/lib/runtime-test/test-effect.ts"
+  ]
 }

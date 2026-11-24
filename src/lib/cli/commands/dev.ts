@@ -1,83 +1,61 @@
-import * as path from 'node:path'
-import { runCodegen } from '#lib/codegen/engine'
-import { generateBootstrap } from '#lib/loader-hook/bootstrap-generator'
-import type { Manifest } from '#lib/manifest/schema'
+import { Effect, FileSystem, Path, Stream } from 'effect';
+import { runCodegen } from '#lib/codegen/engine';
+import { generateBootstrap } from '#lib/loader-hook/bootstrap-generator';
+import { loadManifest } from '../load-manifest.ts';
+import { stderr, stdout } from '../output.ts';
+import { spawnTool } from '../spawn-env.ts';
 
-interface ManifestModule {
-  default?: Manifest
-}
-
-const loadManifest = async (consumerRoot: string): Promise<Manifest> => {
-  const manifestPath = path.join(consumerRoot, 'vsv.manifest.ts')
-  const mod = (await import(manifestPath)) as ManifestModule
-  if (mod.default === undefined) {
-    throw new Error(`${manifestPath} must have a default export of type Manifest`)
-  }
-  return mod.default
-}
-
-const runOnce = async (consumerRoot: string): Promise<void> => {
-  const manifest = await loadManifest(consumerRoot)
-  const codegenResult = await runCodegen({ consumerRoot, manifest })
-  process.stdout.write(`updated ${codegenResult.packageJsonPath}\n`)
-  const bootstrapResult = await generateBootstrap({ consumerRoot })
-  process.stdout.write(`wrote ${bootstrapResult.bootstrapPath}\n`)
-  for (const w of bootstrapResult.warnings) {
-    process.stdout.write(`warning: ${w}\n`)
-  }
-}
-
-const watchAndRun = async (consumerRoot: string): Promise<void> => {
-  const fs = await import('node:fs')
-  const manifestPath = path.join(consumerRoot, 'vsv.manifest.ts')
-  process.stdout.write(`vsv dev: watching ${manifestPath}\n`)
-
-  await runOnce(consumerRoot)
-
-  let pending = false
-  let inFlight = false
-
-  const run = async (): Promise<void> => {
-    if (inFlight) {
-      pending = true
-      return
-    }
-    inFlight = true
-    try {
-      await runOnce(consumerRoot)
-    } catch (err) {
-      process.stderr.write(`vsv dev: error ${err instanceof Error ? err.message : String(err)}\n`)
-    } finally {
-      inFlight = false
-      if (pending) {
-        pending = false
-        void run()
-      }
-    }
-  }
-
-  const watcher = fs.watch(manifestPath, () => {
-    void run()
-  })
-
-  await new Promise<void>((resolve) => {
-    process.on('SIGINT', () => {
-      watcher.close()
-      resolve()
-    })
-  })
-}
+const runOnce = Effect.fnUntraced(function* (
+  consumerRoot: string,
+  manifestPath: string,
+) {
+  const manifest = yield* loadManifest(manifestPath);
+  const { packageJsonPath } = yield* runCodegen({ consumerRoot, manifest });
+  yield* stdout(`updated ${packageJsonPath}\n`);
+  const { bootstrapPath, warnings } = yield* generateBootstrap({
+    consumerRoot,
+  });
+  yield* stdout(`wrote ${bootstrapPath}\n`);
+  for (const warning of warnings) yield* stdout(`warning: ${warning}\n`);
+});
 
 export interface DevOptions {
-  once?: boolean
-  consumerRoot?: string
+  readonly entrypoint: string;
+  readonly once?: boolean;
+  readonly consumerRoot?: string;
 }
 
-export const dev = async (options: DevOptions = {}): Promise<void> => {
-  const consumerRoot = options.consumerRoot ?? process.cwd()
-  if (options.once === true) {
-    await runOnce(consumerRoot)
-    return
-  }
-  await watchAndRun(consumerRoot)
-}
+export const dev = Effect.fnUntraced(function* (options: DevOptions) {
+  const path = yield* Path.Path;
+  const consumerRoot = path.resolve(options.consumerRoot ?? '.');
+  const manifestPath = path.join(consumerRoot, 'vsv.manifest.ts');
+
+  if (options.once === true) return yield* runOnce(consumerRoot, manifestPath);
+
+  const fs = yield* FileSystem.FileSystem;
+  yield* stdout(`vsv dev: watching ${manifestPath}\n`);
+  yield* runOnce(consumerRoot, manifestPath);
+  const changes = fs
+    .watch(consumerRoot)
+    .pipe(
+      Stream.filter(
+        (event) =>
+          event._tag !== 'Remove' &&
+          path.resolve(consumerRoot, event.path) === manifestPath,
+      ),
+    );
+  // A fresh process evaluates the manifest and its imports after each save.
+  const regenerate = spawnTool(
+    'bun',
+    [options.entrypoint, 'dev', '--once'],
+    consumerRoot,
+  ).pipe(
+    Effect.flatMap((code) =>
+      code === 0
+        ? Effect.void
+        : stderr(`vsv dev: generation exited with code ${String(code)}\n`),
+    ),
+    Effect.catch((error) => stderr(`vsv dev: ${error.message}\n`)),
+  );
+  yield* Stream.runForEach(changes, () => regenerate);
+});

@@ -12,5 +12,5 @@ export {
   WhenNot,
   WhenOr,
   WhenUnsafeRaw,
-} from '#lib/when/when'
-export { type ContextKeyName, When, type WhenBuilder } from '#lib/when/builder'
+} from '#lib/when/when';
+export { type ContextKeyName, When, type WhenBuilder } from '#lib/when/builder';

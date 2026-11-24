@@ -1,30 +1,24 @@
-import type { Manifest } from '#lib/manifest/schema'
-import * as path from 'node:path'
+import { Effect, Path } from 'effect';
+import type { Manifest } from '#lib/manifest/schema';
 import {
   mergeManifestIntoPackageJson,
   readPackageJson,
   writePackageJson,
-} from './sync-package-json.ts'
+} from './sync-package-json.ts';
 
 export interface CodegenInputs {
-  consumerRoot: string
-  manifest: Manifest
+  readonly consumerRoot: string;
+  readonly manifest: Manifest;
 }
 
-export interface CodegenResult {
-  packageJsonPath: string
-}
-
-// Codegen now produces only side-effect artifacts. Registry TypeScript types
-// are derived directly from the manifest tuple shape by mapped types in
-// `#lib/runtime/registries` — no emitted `.ts` files.
-export const runCodegen = async (inputs: CodegenInputs): Promise<CodegenResult> => {
-  const { consumerRoot, manifest } = inputs
-
-  const packageJsonPath = path.join(consumerRoot, 'package.json')
-  const existing = await readPackageJson(packageJsonPath)
-  const merged = mergeManifestIntoPackageJson(manifest, existing)
-  await writePackageJson(packageJsonPath, merged)
-
-  return { packageJsonPath }
-}
+export const runCodegen = Effect.fnUntraced(function* ({
+  consumerRoot,
+  manifest,
+}: CodegenInputs) {
+  const path = yield* Path.Path;
+  const packageJsonPath = path.join(consumerRoot, 'package.json');
+  const existing = yield* readPackageJson(packageJsonPath);
+  const merged = yield* mergeManifestIntoPackageJson(manifest, existing);
+  yield* writePackageJson(packageJsonPath, merged);
+  return { packageJsonPath };
+});

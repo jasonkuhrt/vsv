@@ -1,19 +1,15 @@
-import { mock } from 'bun:test'
-import * as vscodeMock from './vscode-mock.ts'
+import { Layer } from 'effect';
+import { VSCodeHost } from '../runtime/vscode-host.ts';
+import { registerMatchers } from './matchers.ts';
+import * as vscodeMock from './vscode-mock.ts';
 
-void mock.module('vscode', () => vscodeMock)
-
-export interface InstalledMock {
-  reset: () => void
-  state: typeof vscodeMock.__state
+export class InstalledMock {
+  readonly reset = vscodeMock.__state.reset;
+  readonly state: typeof vscodeMock.__state = vscodeMock.__state;
+  readonly layer = Layer.succeed(VSCodeHost, vscodeMock);
 }
 
 export const installVSCodeMock = (): InstalledMock => {
-  void mock.module('vscode', () => vscodeMock)
-  return {
-    reset: (): void => {
-      vscodeMock.__state.reset()
-    },
-    state: vscodeMock.__state,
-  }
-}
+  registerMatchers();
+  return new InstalledMock();
+};

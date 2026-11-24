@@ -5,13 +5,15 @@
 // no-requirements Schema bound the manifest/runtime rely on. (Runtime
 // rejection of non-Schema values is behavioral — covered elsewhere.)
 
-import type { Schema } from 'effect'
-import { describe, expectTypeOf, test } from 'vitest'
-import type { AnySchema } from '#lib/schema/any-schema'
+import type { Schema } from 'effect';
+import { describe, expectTypeOf, test } from 'vitest';
+import type { AnySchema } from '#lib/schema/any-schema';
 
 describe('AnySchema', () => {
   test('decoded type is the no-context Schema bound', () => {
-    expectTypeOf<Schema.Schema.Type<typeof AnySchema>>().not.toBeAny()
-    expectTypeOf<Schema.Schema.Type<typeof AnySchema>>().toEqualTypeOf<Schema.Schema.AnyNoContext>()
-  })
-})
+    expectTypeOf<(typeof AnySchema)['Type']>().not.toBeAny();
+    expectTypeOf<(typeof AnySchema)['Type']>().toEqualTypeOf<
+      Schema.ConstraintCodec<unknown, unknown>
+    >();
+  });
+});

@@ -8,52 +8,64 @@
 // `keybindings`, which key-binder owns by design (spec §0) — are
 // spread-preserved by codegen and therefore excluded from the drift check.
 
-import type { Manifest } from '#lib/manifest/schema'
-import { mergeManifestIntoPackageJson } from './sync-package-json.ts'
+import { Effect, Equal, Schema } from 'effect';
+import type { Manifest } from '#lib/manifest/schema';
+import {
+  asJsonObject,
+  mergeManifestIntoPackageJson,
+} from './sync-package-json.ts';
+import type { JsonObject } from './sync-package-json.ts';
 
-type JsonObject = { [k: string]: unknown }
-
-/** Contribution keys vsv codegen owns and therefore drift-checks. */
-const OWNED_CONTRIBUTION_KEYS = ['commands', 'configuration', 'menus'] as const
-
-const asJsonObject = (u: unknown): JsonObject | undefined => {
-  if (u === null || typeof u !== 'object' || Array.isArray(u)) return undefined
-  return u as JsonObject
-}
+const OWNED_CONTRIBUTION_KEYS = ['commands', 'configuration', 'menus'] as const;
+const JsonValue = Schema.fromJsonString(Schema.Unknown);
 
 export interface DriftResult {
-  /** `true` when the actual `package.json` matches the manifest's codegen output. */
-  readonly inSync: boolean
-  /** The codegen-owned contribution keys whose actual value differs from generated. */
-  readonly driftedKeys: ReadonlyArray<string>
+  /**
+   * @description `true` when the actual `package.json` matches the manifest's
+   * codegen output.
+   */
+  readonly inSync: boolean;
+  /**
+   * @description The codegen-owned contribution keys whose actual value differs
+   * from generated.
+   */
+  readonly driftedKeys: ReadonlyArray<string>;
 }
 
 /**
- * Compute whether `package.json#contributes` is in sync with what `manifest`
- * would generate, restricted to the codegen-owned keys.
+ * @description Compute whether `package.json#contributes` is in sync with what
+ * `manifest` would generate, restricted to the codegen-owned keys.
  *
  * Compares by deep value equality after JSON normalization (canonical
  * serialization of the generated vs. actual value for each owned key) so key
  * order and `undefined`-vs-absent differences don't produce false drift.
  */
-export const computeContributesDrift = (
+export const computeContributesDrift = Effect.fnUntraced(function* (
   manifest: Manifest,
   packageJson: JsonObject,
-): DriftResult => {
-  const generated = mergeManifestIntoPackageJson(manifest, packageJson)
+) {
+  const generated = yield* mergeManifestIntoPackageJson(manifest, packageJson);
 
-  const generatedContributes = asJsonObject(generated['contributes']) ?? {}
-  const actualContributes = asJsonObject(packageJson['contributes']) ?? {}
+  const generatedContributes = asJsonObject(generated['contributes']) ?? {};
+  const actualContributes = asJsonObject(packageJson['contributes']) ?? {};
 
-  const driftedKeys: Array<string> = []
+  const driftedKeys: Array<string> = [];
   for (const key of OWNED_CONTRIBUTION_KEYS) {
-    // `JSON.stringify(undefined)` is `undefined`; an absent key on both sides
-    // compares equal (both `undefined`), so a manifest that contributes
-    // nothing for a key and a package.json that omits it are in sync.
-    const generatedJson = JSON.stringify(generatedContributes[key])
-    const actualJson = JSON.stringify(actualContributes[key])
-    if (generatedJson !== actualJson) driftedKeys.push(key)
+    const generatedValue = generatedContributes[key];
+    const actualValue = actualContributes[key];
+    if (generatedValue === undefined || actualValue === undefined) {
+      if (generatedValue !== actualValue) driftedKeys.push(key);
+    } else {
+      const encode = Schema.encodeEffect(JsonValue);
+      const generatedJson = yield* encode(generatedValue);
+      const actualJson = yield* encode(actualValue);
+      const decode = Schema.decodeEffect(JsonValue);
+      const generatedData = yield* decode(generatedJson);
+      const actualData = yield* decode(actualJson);
+      if (!Equal.equals(generatedData, actualData)) driftedKeys.push(key);
+    }
   }
 
-  return { inSync: driftedKeys.length === 0, driftedKeys }
-}
+  const result: DriftResult = { inSync: driftedKeys.length === 0, driftedKeys };
+  return result;
+});

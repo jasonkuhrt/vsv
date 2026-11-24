@@ -1,5 +1,5 @@
-import { noUnregisteredCommand } from './rules/no-unregistered-command.ts'
-import { noUnregisteredContextKey } from './rules/no-unregistered-context-key.ts'
+import { noUnregisteredCommand } from './rules/no-unregistered-command.ts';
+import { noUnregisteredContextKey } from './rules/no-unregistered-context-key.ts';
 
 export const plugin = {
   meta: {
@@ -10,6 +10,6 @@ export const plugin = {
     'no-unregistered-command': noUnregisteredCommand,
     'no-unregistered-context-key': noUnregisteredContextKey,
   },
-} as const
+} as const;
 
-export { noUnregisteredCommand, noUnregisteredContextKey }
+export { noUnregisteredCommand, noUnregisteredContextKey };

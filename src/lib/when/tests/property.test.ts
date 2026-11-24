@@ -19,8 +19,10 @@
 // Equality is bun's `toEqual` (deep structural) — NOT `Equal.equals`, which
 // compares the `terms` array field of WhenAnd/WhenOr by reference.
 
-import { describe, expect, test } from 'bun:test'
-import { Arbitrary, FastCheck as fc, Schema } from 'effect'
+import { describe, expect, test } from 'bun:test';
+import { flow, String, Effect, Schema } from 'effect';
+import { TestSchema } from 'effect/testing';
+import * as fc from 'fast-check';
 import {
   type WhenAst,
   WhenAnd,
@@ -34,36 +36,44 @@ import {
   WhenNeq,
   WhenNot,
   WhenOr,
-} from '../when.ts'
+} from '../when.ts';
 
-const encode = Schema.encodeSync(WhenClause)
-const decode = Schema.decodeUnknownSync(WhenClause)
-const encodeStruct = Schema.encodeSync(WhenAstStruct)
-const decodeStruct = Schema.decodeUnknownSync(WhenAstStruct)
+const encode = flow(Schema.encodeEffect(WhenClause), Effect.runSync);
+const decode = flow(Schema.decodeUnknownEffect(WhenClause), Effect.runSync);
 
 // ─── Well-formed AST generator ───────────────────────────────────────────
 
 // Context-key identifier — what the decode regexes accept.
-const arbIdent = fc.stringMatching(/^[A-Za-z_][A-Za-z0-9_.-]{0,6}$/)
+const arbIdent = fc.stringMatching(/^[A-Za-z_][A-Za-z0-9_.-]{0,6}$/);
 // `==`/`!=` RHS value: a quote-free string, a finite non-`-0` number, or a
 // boolean. Quote-free because VS Code's `'…'` literals have no escape syntax.
-const arbStr = fc.string({ maxLength: 8 }).filter((s) => !s.includes(`'`))
-const arbNum = fc.double().filter((d) => Number.isFinite(d) && !Object.is(d, -0))
-const arbValue = fc.oneof(arbStr, arbNum, fc.boolean())
+const arbStr = fc
+  .string({ maxLength: 8 })
+  .filter((s) => !String.includes(`'`)(s));
+const arbNum = fc
+  .double()
+  .filter((d) => Number.isFinite(d) && !Object.is(d, -0));
+const arbValue = fc.oneof(arbStr, arbNum, fc.boolean());
 // Regex pattern: non-empty, no `/` (closes the regex) and no `\` (escape
 // handling is exercised by the fixture corpus, not here). No whitespace, so
 // it satisfies `NonEmptyTrimmedString`.
-const arbPattern = fc.stringMatching(/^[A-Za-z0-9^$.*+?|()[\]{}-]{1,10}$/)
-const arbFlags = fc.stringMatching(/^[gimsuy]{1,3}$/)
+const arbPattern = fc.stringMatching(/^[A-Za-z0-9^$.*+?|()[\]{}-]{1,10}$/);
+const arbFlags = fc.stringMatching(/^[gimsuy]{1,3}$/);
 
 const arbAtom: fc.Arbitrary<WhenAst> = fc.oneof(
   arbIdent.map((key) => WhenBoolKey.make({ key })),
   fc.record({ key: arbIdent, value: arbValue }).map((r) => WhenEq.make(r)),
   fc.record({ key: arbIdent, value: arbValue }).map((r) => WhenNeq.make(r)),
   fc
-    .record({ key: arbIdent, pattern: arbPattern, flags: fc.option(arbFlags, { nil: undefined }) })
+    .record({
+      key: arbIdent,
+      pattern: arbPattern,
+      flags: fc.option(arbFlags, { nil: undefined }),
+    })
     .map(({ key, pattern, flags }) =>
-      WhenMatch.make(flags === undefined ? { key, pattern } : { key, pattern, flags }),
+      WhenMatch.make(
+        flags === undefined ? { key, pattern } : { key, pattern, flags },
+      ),
     ),
   fc.record({ key: arbIdent, set: arbIdent }).map((r) => WhenIn.make(r)),
   fc
@@ -73,17 +83,21 @@ const arbAtom: fc.Arbitrary<WhenAst> = fc.oneof(
       value: arbNum,
     })
     .map((r) => WhenCmp.make(r)),
-)
+);
 
 const { ast: arbWellFormed } = fc.letrec<{ ast: WhenAst }>((tie) => ({
   ast: fc.oneof(
     { depthSize: 'small', maxDepth: 4 },
     arbAtom,
     tie('ast').map((inner) => WhenNot.make({ inner })),
-    fc.array(tie('ast'), { minLength: 2, maxLength: 4 }).map((terms) => WhenAnd.make({ terms })),
-    fc.array(tie('ast'), { minLength: 2, maxLength: 4 }).map((terms) => WhenOr.make({ terms })),
+    fc
+      .array(tie('ast'), { minLength: 2, maxLength: 4 })
+      .map((terms) => WhenAnd.make({ terms })),
+    fc
+      .array(tie('ast'), { minLength: 2, maxLength: 4 })
+      .map((terms) => WhenOr.make({ terms })),
   ),
-}))
+}));
 
 // ─── Properties ──────────────────────────────────────────────────────────
 
@@ -91,28 +105,24 @@ describe('WhenClause property tests', () => {
   test('string codec: decode(encode(ast)) preserves a well-formed AST', () => {
     fc.assert(
       fc.property(arbWellFormed, (ast) => {
-        expect(decode(encode(ast))).toEqual(ast)
+        expect(decode(encode(ast))).toEqual(ast);
       }),
       { numRuns: 500 },
-    )
-  })
+    );
+  });
 
   test('string codec: encode is stable/idempotent — encode(decode(encode(ast))) === encode(ast)', () => {
     fc.assert(
       fc.property(arbWellFormed, (ast) => {
-        const once = encode(ast)
-        expect(encode(decode(once))).toBe(once)
+        const once = encode(ast);
+        expect(encode(decode(once))).toBe(once);
       }),
       { numRuns: 500 },
-    )
-  })
+    );
+  });
 
   test('struct codec: decodeStruct(encodeStruct(ast)) preserves any AST', () => {
-    fc.assert(
-      fc.property(Arbitrary.make(WhenAstStruct), (ast) => {
-        expect(decodeStruct(encodeStruct(ast))).toEqual(ast)
-      }),
-      { numRuns: 500 },
-    )
-  })
-})
+    const asserts = new TestSchema.Asserts(WhenAstStruct);
+    Effect.runSync(asserts.verifyRoundTripEffect({ runs: 500 }));
+  });
+});

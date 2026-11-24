@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test'
-import { Schema } from 'effect'
+import { describe, expect, test } from 'bun:test';
+import { flow, Effect, Schema } from 'effect';
 import {
   WhenAnd,
   type WhenAst,
@@ -14,39 +14,50 @@ import {
   WhenNot,
   WhenOr,
   WhenUnsafeRaw,
-} from '../when.ts'
+} from '../when.ts';
 
-const decode = Schema.decodeUnknownSync(WhenClause)
-const encode = Schema.encodeSync(WhenClause)
+const decode = flow(Schema.decodeUnknownEffect(WhenClause), Effect.runSync);
+const encode = flow(Schema.encodeEffect(WhenClause), Effect.runSync);
 
-const decodeStruct = Schema.decodeUnknownSync(WhenAstStruct)
-const encodeStruct = Schema.encodeSync(WhenAstStruct)
+const decodeStruct = flow(
+  Schema.decodeUnknownEffect(WhenAstStruct),
+  Effect.runSync,
+);
+const encodeStruct = flow(Schema.encodeEffect(WhenAstStruct), Effect.runSync);
 
 // ─── Atom: WhenBoolKey ───────────────────────────────────────────────────
 
 describe('WhenBoolKey', () => {
   test('decode bare identifier', () => {
-    expect(decode('editorTextFocus')).toEqual(WhenBoolKey.make({ key: 'editorTextFocus' }))
-  })
+    expect(decode('editorTextFocus')).toEqual(
+      WhenBoolKey.make({ key: 'editorTextFocus' }),
+    );
+  });
 
   test('decode tolerates surrounding whitespace', () => {
-    expect(decode('   editorTextFocus   ')).toEqual(WhenBoolKey.make({ key: 'editorTextFocus' }))
-  })
+    expect(decode('   editorTextFocus   ')).toEqual(
+      WhenBoolKey.make({ key: 'editorTextFocus' }),
+    );
+  });
 
   test('decode allows dotted identifiers', () => {
-    expect(decode('foo.bar.baz')).toEqual(WhenBoolKey.make({ key: 'foo.bar.baz' }))
-  })
+    expect(decode('foo.bar.baz')).toEqual(
+      WhenBoolKey.make({ key: 'foo.bar.baz' }),
+    );
+  });
 
   test('encode emits the bare key', () => {
-    expect(encode(WhenBoolKey.make({ key: 'editorTextFocus' }))).toBe('editorTextFocus')
-  })
+    expect(encode(WhenBoolKey.make({ key: 'editorTextFocus' }))).toBe(
+      'editorTextFocus',
+    );
+  });
 
   test('falls through to UnsafeRaw when identifier starts with digit', () => {
     // Bare-key regex requires leading letter/underscore; digits leak to UnsafeRaw.
-    const ast = decode('1bad')
-    expect(ast._tag).toBe('WhenUnsafeRaw')
-  })
-})
+    const ast = decode('1bad');
+    expect(ast._tag).toBe('WhenUnsafeRaw');
+  });
+});
 
 // ─── Atom: WhenEq ────────────────────────────────────────────────────────
 
@@ -54,42 +65,52 @@ describe('WhenEq', () => {
   test('decode with string literal value', () => {
     expect(decode("editorLangId == 'markdown'")).toEqual(
       WhenEq.make({ key: 'editorLangId', value: 'markdown' }),
-    )
-  })
+    );
+  });
 
   test('decode with integer value', () => {
     expect(decode('groupActiveEditorCount == 1')).toEqual(
       WhenEq.make({ key: 'groupActiveEditorCount', value: 1 }),
-    )
-  })
+    );
+  });
 
   test('decode with negative number value', () => {
-    expect(decode('foo == -3.5')).toEqual(WhenEq.make({ key: 'foo', value: -3.5 }))
-  })
+    expect(decode('foo == -3.5')).toEqual(
+      WhenEq.make({ key: 'foo', value: -3.5 }),
+    );
+  });
 
   test('decode with true value', () => {
-    expect(decode('foo == true')).toEqual(WhenEq.make({ key: 'foo', value: true }))
-  })
+    expect(decode('foo == true')).toEqual(
+      WhenEq.make({ key: 'foo', value: true }),
+    );
+  });
 
   test('decode with false value', () => {
-    expect(decode('foo == false')).toEqual(WhenEq.make({ key: 'foo', value: false }))
-  })
+    expect(decode('foo == false')).toEqual(
+      WhenEq.make({ key: 'foo', value: false }),
+    );
+  });
 
   test('encode string', () => {
-    expect(encode(WhenEq.make({ key: 'editorLangId', value: 'markdown' }))).toBe(
-      "editorLangId == 'markdown'",
-    )
-  })
+    expect(
+      encode(WhenEq.make({ key: 'editorLangId', value: 'markdown' })),
+    ).toBe("editorLangId == 'markdown'");
+  });
 
   test('encode number', () => {
-    expect(encode(WhenEq.make({ key: 'count', value: 7 }))).toBe('count == 7')
-  })
+    expect(encode(WhenEq.make({ key: 'count', value: 7 }))).toBe('count == 7');
+  });
 
   test('encode boolean', () => {
-    expect(encode(WhenEq.make({ key: 'flag', value: true }))).toBe('flag == true')
-    expect(encode(WhenEq.make({ key: 'flag', value: false }))).toBe('flag == false')
-  })
-})
+    expect(encode(WhenEq.make({ key: 'flag', value: true }))).toBe(
+      'flag == true',
+    );
+    expect(encode(WhenEq.make({ key: 'flag', value: false }))).toBe(
+      'flag == false',
+    );
+  });
+});
 
 // ─── Atom: WhenNeq ───────────────────────────────────────────────────────
 
@@ -97,15 +118,15 @@ describe('WhenNeq', () => {
   test('decode with string value', () => {
     expect(decode("editorLangId != 'plaintext'")).toEqual(
       WhenNeq.make({ key: 'editorLangId', value: 'plaintext' }),
-    )
-  })
+    );
+  });
 
   test('encode string', () => {
-    expect(encode(WhenNeq.make({ key: 'editorLangId', value: 'plaintext' }))).toBe(
-      "editorLangId != 'plaintext'",
-    )
-  })
-})
+    expect(
+      encode(WhenNeq.make({ key: 'editorLangId', value: 'plaintext' })),
+    ).toBe("editorLangId != 'plaintext'");
+  });
+});
 
 // ─── Atom: WhenMatch ─────────────────────────────────────────────────────
 
@@ -113,62 +134,89 @@ describe('WhenMatch', () => {
   test('decode with no flags', () => {
     expect(decode('editorLangId =~ /^(markdown|prompt)$/')).toEqual(
       WhenMatch.make({ key: 'editorLangId', pattern: '^(markdown|prompt)$' }),
-    )
-  })
+    );
+  });
 
   test('decode with flags', () => {
     expect(decode('foo =~ /bar/i')).toEqual(
       WhenMatch.make({ key: 'foo', pattern: 'bar', flags: 'i' }),
-    )
-  })
+    );
+  });
 
   test('encode with no flags', () => {
-    expect(encode(WhenMatch.make({ key: 'editorLangId', pattern: '^(markdown|prompt)$' }))).toBe(
-      'editorLangId =~ /^(markdown|prompt)$/',
-    )
-  })
+    expect(
+      encode(
+        WhenMatch.make({ key: 'editorLangId', pattern: '^(markdown|prompt)$' }),
+      ),
+    ).toBe('editorLangId =~ /^(markdown|prompt)$/');
+  });
 
   test('encode with flags', () => {
-    expect(encode(WhenMatch.make({ key: 'foo', pattern: 'bar', flags: 'gi' }))).toBe(
-      'foo =~ /bar/gi',
-    )
-  })
-})
+    expect(
+      encode(WhenMatch.make({ key: 'foo', pattern: 'bar', flags: 'gi' })),
+    ).toBe('foo =~ /bar/gi');
+  });
+});
 
 // ─── Atom: WhenIn ────────────────────────────────────────────────────────
 
 describe('WhenIn', () => {
   test('decode', () => {
-    expect(decode('key in someSet')).toEqual(WhenIn.make({ key: 'key', set: 'someSet' }))
-  })
+    expect(decode('key in someSet')).toEqual(
+      WhenIn.make({ key: 'key', set: 'someSet' }),
+    );
+  });
 
   test('encode', () => {
-    expect(encode(WhenIn.make({ key: 'key', set: 'someSet' }))).toBe('key in someSet')
-  })
-})
+    expect(encode(WhenIn.make({ key: 'key', set: 'someSet' }))).toBe(
+      'key in someSet',
+    );
+  });
+});
 
 // ─── Atom: WhenCmp ───────────────────────────────────────────────────────
 
 describe('WhenCmp', () => {
+  test('round-trips a comparison outside the finite numeric range as raw text', () => {
+    const text = 'count > 1e999';
+    const ast = decode(text);
+    expect(ast).toEqual(WhenUnsafeRaw.make({ text }));
+    expect(encode(ast)).toBe(text);
+  });
+
   test('decode each operator', () => {
-    expect(decode('count < 5')).toEqual(WhenCmp.make({ key: 'count', op: '<', value: 5 }))
-    expect(decode('count <= 5')).toEqual(WhenCmp.make({ key: 'count', op: '<=', value: 5 }))
-    expect(decode('count > 5')).toEqual(WhenCmp.make({ key: 'count', op: '>', value: 5 }))
-    expect(decode('count >= 5')).toEqual(WhenCmp.make({ key: 'count', op: '>=', value: 5 }))
-  })
+    expect(decode('count < 5')).toEqual(
+      WhenCmp.make({ key: 'count', op: '<', value: 5 }),
+    );
+    expect(decode('count <= 5')).toEqual(
+      WhenCmp.make({ key: 'count', op: '<=', value: 5 }),
+    );
+    expect(decode('count > 5')).toEqual(
+      WhenCmp.make({ key: 'count', op: '>', value: 5 }),
+    );
+    expect(decode('count >= 5')).toEqual(
+      WhenCmp.make({ key: 'count', op: '>=', value: 5 }),
+    );
+  });
 
   test('decode with float value', () => {
-    expect(decode('ratio > 0.5')).toEqual(WhenCmp.make({ key: 'ratio', op: '>', value: 0.5 }))
-  })
+    expect(decode('ratio > 0.5')).toEqual(
+      WhenCmp.make({ key: 'ratio', op: '>', value: 0.5 }),
+    );
+  });
 
   test('decode with negative value', () => {
-    expect(decode('delta >= -1')).toEqual(WhenCmp.make({ key: 'delta', op: '>=', value: -1 }))
-  })
+    expect(decode('delta >= -1')).toEqual(
+      WhenCmp.make({ key: 'delta', op: '>=', value: -1 }),
+    );
+  });
 
   test('encode', () => {
-    expect(encode(WhenCmp.make({ key: 'count', op: '>=', value: 3 }))).toBe('count >= 3')
-  })
-})
+    expect(encode(WhenCmp.make({ key: 'count', op: '>=', value: 3 }))).toBe(
+      'count >= 3',
+    );
+  });
+});
 
 // ─── Combinator: WhenNot ─────────────────────────────────────────────────
 
@@ -176,49 +224,54 @@ describe('WhenNot', () => {
   test('decode without inner parens', () => {
     expect(decode('!inputFocus')).toEqual(
       WhenNot.make({ inner: WhenBoolKey.make({ key: 'inputFocus' }) }),
-    )
-  })
+    );
+  });
 
   test('decode with inner parens', () => {
     expect(decode('!(inputFocus)')).toEqual(
       WhenNot.make({ inner: WhenBoolKey.make({ key: 'inputFocus' }) }),
-    )
-  })
+    );
+  });
 
   test('decode over compound inner', () => {
     expect(decode('!(a && b)')).toEqual(
       WhenNot.make({
         inner: WhenAnd.make({
-          terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
+          terms: [
+            WhenBoolKey.make({ key: 'a' }),
+            WhenBoolKey.make({ key: 'b' }),
+          ],
         }),
       }),
-    )
-  })
+    );
+  });
 
   test('encode emits bare !key for a bare-key inner (no parens)', () => {
-    const ast = WhenNot.make({ inner: WhenBoolKey.make({ key: 'inputFocus' }) })
-    expect(encode(ast)).toBe('!inputFocus')
-    expect(decode(encode(ast))).toEqual(ast)
-  })
+    const ast = WhenNot.make({
+      inner: WhenBoolKey.make({ key: 'inputFocus' }),
+    });
+    expect(encode(ast)).toBe('!inputFocus');
+    expect(decode(encode(ast))).toEqual(ast);
+  });
 
   test('encode wraps a non-key inner in !(...)', () => {
     // `!` binds tighter than the `==` atom, so negating an `Eq` requires the
     // paren envelope or `!a == b` would parse as `(!a) == b`.
-    const ast = WhenNot.make({ inner: WhenEq.make({ key: 'a', value: 'b' }) })
-    expect(encode(ast)).toBe("!(a == 'b')")
-    expect(decode(encode(ast))).toEqual(ast)
-  })
+    const ast = WhenNot.make({ inner: WhenEq.make({ key: 'a', value: 'b' }) });
+    expect(encode(ast)).toBe("!(a == 'b')");
+    expect(decode(encode(ast))).toEqual(ast);
+  });
 
   test('encode wraps a compound inner in !(...)', () => {
     const ast = WhenNot.make({
       inner: WhenAnd.make({
         terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
       }),
-    })
-    expect(encode(ast)).toBe('!(a && b)')
-    expect(decode(encode(ast))).toEqual(ast)
-  })
-})
+    });
+    expect(encode(ast)).toBe('!(a && b)');
+    expect(decode(encode(ast))).toEqual(ast);
+  });
+});
 
 // ─── Combinator: WhenAnd ─────────────────────────────────────────────────
 
@@ -228,8 +281,8 @@ describe('WhenAnd', () => {
       WhenAnd.make({
         terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
       }),
-    )
-  })
+    );
+  });
 
   test('decode three terms', () => {
     expect(decode('a && b && c')).toEqual(
@@ -240,37 +293,43 @@ describe('WhenAnd', () => {
           WhenBoolKey.make({ key: 'c' }),
         ],
       }),
-    )
-  })
+    );
+  });
 
   test('decode with parenthesized children', () => {
     expect(decode('(a == 1) && (b == 2)')).toEqual(
       WhenAnd.make({
-        terms: [WhenEq.make({ key: 'a', value: 1 }), WhenEq.make({ key: 'b', value: 2 })],
+        terms: [
+          WhenEq.make({ key: 'a', value: 1 }),
+          WhenEq.make({ key: 'b', value: 2 }),
+        ],
       }),
-    )
-  })
+    );
+  });
 
   test('encode produces minimal-paren canonical form (no per-term parens)', () => {
     const ast = WhenAnd.make({
       terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
-    })
-    expect(encode(ast)).toBe('a && b')
-    expect(decode(encode(ast))).toEqual(ast)
-  })
+    });
+    expect(encode(ast)).toBe('a && b');
+    expect(decode(encode(ast))).toEqual(ast);
+  });
 
   test('encode fences an Or term under And (Or binds looser)', () => {
     const ast = WhenAnd.make({
       terms: [
         WhenBoolKey.make({ key: 'a' }),
         WhenOr.make({
-          terms: [WhenBoolKey.make({ key: 'b' }), WhenBoolKey.make({ key: 'c' })],
+          terms: [
+            WhenBoolKey.make({ key: 'b' }),
+            WhenBoolKey.make({ key: 'c' }),
+          ],
         }),
       ],
-    })
-    expect(encode(ast)).toBe('a && (b || c)')
-    expect(decode(encode(ast))).toEqual(ast)
-  })
+    });
+    expect(encode(ast)).toBe('a && (b || c)');
+    expect(decode(encode(ast))).toEqual(ast);
+  });
 
   test('encode fences a nested And term under And (preserves structure)', () => {
     // `a && (b && c)` and `a && b && c` are distinct ASTs; the inner And is
@@ -279,14 +338,17 @@ describe('WhenAnd', () => {
       terms: [
         WhenBoolKey.make({ key: 'a' }),
         WhenAnd.make({
-          terms: [WhenBoolKey.make({ key: 'b' }), WhenBoolKey.make({ key: 'c' })],
+          terms: [
+            WhenBoolKey.make({ key: 'b' }),
+            WhenBoolKey.make({ key: 'c' }),
+          ],
         }),
       ],
-    })
-    expect(encode(ast)).toBe('a && (b && c)')
-    expect(decode(encode(ast))).toEqual(ast)
-  })
-})
+    });
+    expect(encode(ast)).toBe('a && (b && c)');
+    expect(decode(encode(ast))).toEqual(ast);
+  });
+});
 
 // ─── Combinator: WhenOr ──────────────────────────────────────────────────
 
@@ -296,84 +358,97 @@ describe('WhenOr', () => {
       WhenOr.make({
         terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
       }),
-    )
-  })
+    );
+  });
 
   test('Or binds looser than And (a && b || c => Or(And(a,b), c))', () => {
     expect(decode('a && b || c')).toEqual(
       WhenOr.make({
         terms: [
           WhenAnd.make({
-            terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
+            terms: [
+              WhenBoolKey.make({ key: 'a' }),
+              WhenBoolKey.make({ key: 'b' }),
+            ],
           }),
           WhenBoolKey.make({ key: 'c' }),
         ],
       }),
-    )
-  })
+    );
+  });
 
   test('encode produces minimal-paren canonical form (no per-term parens)', () => {
     const ast = WhenOr.make({
       terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
-    })
-    expect(encode(ast)).toBe('a || b')
-    expect(decode(encode(ast))).toEqual(ast)
-  })
+    });
+    expect(encode(ast)).toBe('a || b');
+    expect(decode(encode(ast))).toEqual(ast);
+  });
 
   test('encode leaves an And term bare under Or (And binds tighter)', () => {
     const ast = WhenOr.make({
       terms: [
         WhenAnd.make({
-          terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
+          terms: [
+            WhenBoolKey.make({ key: 'a' }),
+            WhenBoolKey.make({ key: 'b' }),
+          ],
         }),
         WhenBoolKey.make({ key: 'c' }),
       ],
-    })
-    expect(encode(ast)).toBe('a && b || c')
-    expect(decode(encode(ast))).toEqual(ast)
-  })
+    });
+    expect(encode(ast)).toBe('a && b || c');
+    expect(decode(encode(ast))).toEqual(ast);
+  });
 
   test('encode fences a nested Or term under Or (preserves structure)', () => {
     const ast = WhenOr.make({
       terms: [
         WhenBoolKey.make({ key: 'a' }),
         WhenOr.make({
-          terms: [WhenBoolKey.make({ key: 'b' }), WhenBoolKey.make({ key: 'c' })],
+          terms: [
+            WhenBoolKey.make({ key: 'b' }),
+            WhenBoolKey.make({ key: 'c' }),
+          ],
         }),
       ],
-    })
-    expect(encode(ast)).toBe('a || (b || c)')
-    expect(decode(encode(ast))).toEqual(ast)
-  })
-})
+    });
+    expect(encode(ast)).toBe('a || (b || c)');
+    expect(decode(encode(ast))).toEqual(ast);
+  });
+});
 
 // ─── Fallback: WhenUnsafeRaw ─────────────────────────────────────────────
 
 describe('WhenUnsafeRaw', () => {
   test('absorbs unparseable text', () => {
-    const ast = decode('totally $weird @input')
-    expect(ast._tag).toBe('WhenUnsafeRaw')
-    expect((ast as WhenUnsafeRaw).text).toBe('totally $weird @input')
-  })
+    const ast = decode('totally $weird @input');
+    expect(ast._tag).toBe('WhenUnsafeRaw');
+    expect(ast._tag === 'WhenUnsafeRaw' ? ast.text : undefined).toBe(
+      'totally $weird @input',
+    );
+  });
 
   test('encode emits the stored text verbatim', () => {
-    expect(encode(WhenUnsafeRaw.make({ text: 'arbitrary clause' }))).toBe('arbitrary clause')
-  })
+    expect(encode(WhenUnsafeRaw.make({ text: 'arbitrary clause' }))).toBe(
+      'arbitrary clause',
+    );
+  });
 
   test('empty / whitespace-only input fails the entire union', () => {
-    expect(() => decode('')).toThrow()
-    expect(() => decode('   ')).toThrow()
-  })
-})
+    expect(() => decode('')).toThrow();
+    expect(() => decode('   ')).toThrow();
+  });
+});
 
 // ─── Real-world end-to-end ───────────────────────────────────────────────
 
 describe('end-to-end: VS Code preview gate', () => {
   const input =
-    "(activeCustomEditorId == 'vscode.markdown.preview.editor' || activeWebviewPanelId == 'markdown.preview') && !inputFocus"
+    "(activeCustomEditorId == 'vscode.markdown.preview.editor' || activeWebviewPanelId == 'markdown.preview') && !inputFocus";
 
   test('decodes the markdown preview gate', () => {
-    const ast = decode(input)
+    const ast = decode(input);
     expect(ast).toEqual(
       WhenAnd.make({
         terms: [
@@ -383,24 +458,27 @@ describe('end-to-end: VS Code preview gate', () => {
                 key: 'activeCustomEditorId',
                 value: 'vscode.markdown.preview.editor',
               }),
-              WhenEq.make({ key: 'activeWebviewPanelId', value: 'markdown.preview' }),
+              WhenEq.make({
+                key: 'activeWebviewPanelId',
+                value: 'markdown.preview',
+              }),
             ],
           }),
           WhenNot.make({ inner: WhenBoolKey.make({ key: 'inputFocus' }) }),
         ],
       }),
-    )
-  })
+    );
+  });
 
   test('canonical re-encode is structurally identical on second round-trip', () => {
-    const ast1 = decode(input)
-    const text1 = encode(ast1)
-    const ast2 = decode(text1)
-    const text2 = encode(ast2)
-    expect(text2).toBe(text1)
-    expect(ast2).toEqual(ast1)
-  })
-})
+    const ast1 = decode(input);
+    const text1 = encode(ast1);
+    const ast2 = decode(text1);
+    const text2 = encode(ast2);
+    expect(text2).toBe(text1);
+    expect(ast2).toEqual(ast1);
+  });
+});
 
 // ─── Round-trip property check across every variant ──────────────────────
 
@@ -412,7 +490,10 @@ describe('round-trip: encode then decode preserves structure', () => {
     ['Eq boolean', WhenEq.make({ key: 'flag', value: true })],
     ['Neq', WhenNeq.make({ key: 'foo', value: 'bar' })],
     ['Match no flags', WhenMatch.make({ key: 'lang', pattern: 'md|tx' })],
-    ['Match with flags', WhenMatch.make({ key: 'lang', pattern: 'foo', flags: 'i' })],
+    [
+      'Match with flags',
+      WhenMatch.make({ key: 'lang', pattern: 'foo', flags: 'i' }),
+    ],
     ['In', WhenIn.make({ key: 'k', set: 's' })],
     ['Cmp <', WhenCmp.make({ key: 'n', op: '<', value: 1 })],
     ['Cmp <=', WhenCmp.make({ key: 'n', op: '<=', value: 1 })],
@@ -437,7 +518,10 @@ describe('round-trip: encode then decode preserves structure', () => {
         inner: WhenAnd.make({
           terms: [
             WhenOr.make({
-              terms: [WhenEq.make({ key: 'a', value: 1 }), WhenEq.make({ key: 'b', value: 'x' })],
+              terms: [
+                WhenEq.make({ key: 'a', value: 1 }),
+                WhenEq.make({ key: 'b', value: 'x' }),
+              ],
             }),
             WhenBoolKey.make({ key: 'c' }),
           ],
@@ -445,15 +529,15 @@ describe('round-trip: encode then decode preserves structure', () => {
       }),
     ],
     ['UnsafeRaw', WhenUnsafeRaw.make({ text: 'totally $weird @input' })],
-  ]
+  ];
   for (const [name, ast] of cases) {
     test(name, () => {
-      const text = encode(ast)
-      const back = decode(text)
-      expect(back).toEqual(ast)
-    })
+      const text = encode(ast);
+      const back = decode(text);
+      expect(back).toEqual(ast);
+    });
   }
-})
+});
 
 // ─── Structural codec (WhenAstStruct) ────────────────────────────────────
 
@@ -465,45 +549,46 @@ describe('WhenAstStruct', () => {
         { _tag: 'WhenBoolKey', key: 'a' },
         { _tag: 'WhenBoolKey', key: 'b' },
       ],
-    }
-    const ast = decodeStruct(raw)
+    };
+    const ast = decodeStruct(raw);
     expect(ast).toEqual(
       WhenAnd.make({
         terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
       }),
-    )
-  })
+    );
+  });
 
   test('encodes back to tagged-struct shape', () => {
     const ast = WhenAnd.make({
       terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
-    })
-    expect(encodeStruct(ast)).toEqual({
+    });
+    const encoded = {
       _tag: 'WhenAnd',
       terms: [
         { _tag: 'WhenBoolKey', key: 'a' },
         { _tag: 'WhenBoolKey', key: 'b' },
       ],
-    })
-  })
+    } as const;
+    expect(encodeStruct(ast)).toEqual(encoded);
+  });
 
   test('rejects an unknown _tag', () => {
-    expect(() => decodeStruct({ _tag: 'Nope' })).toThrow()
-  })
+    expect(() => decodeStruct({ _tag: 'Nope' })).toThrow();
+  });
 
   // Exercise each TaggedClass's `Schema.suspend(...)` recursive field through
   // the struct codec so every suspend thunk fires at least once.
   test('round-trips WhenNot through the struct codec', () => {
-    const ast = WhenNot.make({ inner: WhenBoolKey.make({ key: 'x' }) })
-    expect(decodeStruct(encodeStruct(ast))).toEqual(ast)
-  })
+    const ast = WhenNot.make({ inner: WhenBoolKey.make({ key: 'x' }) });
+    expect(decodeStruct(encodeStruct(ast))).toEqual(ast);
+  });
 
   test('round-trips WhenOr through the struct codec', () => {
     const ast = WhenOr.make({
       terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
-    })
-    expect(decodeStruct(encodeStruct(ast))).toEqual(ast)
-  })
+    });
+    expect(decodeStruct(encodeStruct(ast))).toEqual(ast);
+  });
 
   test('round-trips every atom variant through the struct codec', () => {
     const atoms: ReadonlyArray<WhenAst> = [
@@ -514,23 +599,26 @@ describe('WhenAstStruct', () => {
       WhenIn.make({ key: 'k', set: 's' }),
       WhenCmp.make({ key: 'k', op: '>=', value: 3 }),
       WhenUnsafeRaw.make({ text: 'raw' }),
-    ]
+    ];
     for (const ast of atoms) {
-      expect(decodeStruct(encodeStruct(ast))).toEqual(ast)
+      expect(decodeStruct(encodeStruct(ast))).toEqual(ast);
     }
-  })
+  });
 
   test('round-trips deeply nested Not(And(Or(...))) through struct codec', () => {
     const ast = WhenNot.make({
       inner: WhenAnd.make({
         terms: [
           WhenOr.make({
-            terms: [WhenBoolKey.make({ key: 'a' }), WhenBoolKey.make({ key: 'b' })],
+            terms: [
+              WhenBoolKey.make({ key: 'a' }),
+              WhenBoolKey.make({ key: 'b' }),
+            ],
           }),
           WhenBoolKey.make({ key: 'c' }),
         ],
       }),
-    })
-    expect(decodeStruct(encodeStruct(ast))).toEqual(ast)
-  })
-})
+    });
+    expect(decodeStruct(encodeStruct(ast))).toEqual(ast);
+  });
+});

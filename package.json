@@ -1,6 +1,6 @@
 {
   "name": "@jasonkuhrt/vsv",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "keywords": [
     "bun",
     "effect",
@@ -28,14 +28,6 @@
     "COLDSTART.md"
   ],
   "type": "module",
-  "sideEffects": [
-    "./build/exports/runtime-test.js",
-    "./build/lib/runtime-test/install-mock.js",
-    "./build/lib/runtime-test/preload.js",
-    "./src/exports/runtime-test.ts",
-    "./src/lib/runtime-test/install-mock.ts",
-    "./src/lib/runtime-test/preload.ts"
-  ],
   "imports": {
     "#lib/*": "./src/lib/*.ts"
   },
@@ -47,47 +39,49 @@
     "./schema": "./build/exports/schema.js",
     "./when": "./build/exports/when.js",
     "./runtime/test": "./build/exports/runtime-test.js",
-    "./runtime/test/preload": "./build/exports/runtime-test-preload.js",
-    "./cli": "./build/exports/cli.js"
+    "./cli": "./build/exports/cli.js",
+    "./runtime/vscode": "./build/exports/runtime-vscode.js"
   },
   "scripts": {
-    "build": "tsgo --build tsconfig.build.json && bun run build:rewrite-imports",
+    "build": "tsrs --build tsconfig.build.json && bun run build:rewrite-imports",
+    "build:clean": "tsrs --build --clean tsconfig.build.json && rm -rf build",
     "build:rewrite-imports": "bun scripts/rewrite-lib-imports.ts",
-    "build:clean": "tsgo --build --clean && rm -rf build",
-    "prebuild": "bun run build:clean",
-    "build:watch": "tsgo --build tsconfig.build.json --watch",
-    "test": "bun test src tests",
-    "test:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage src tests",
+    "build:watch": "tsrs --build tsconfig.build.json --watch",
+    "check": "bun run check:format && bun run check:lint && bun run check:purity && bun run check:types && bun run check:types-d && bun run test && bun run build && bun run check:package && bun run check:exports",
+    "check:exports": "attw --pack . --profile esm-only",
+    "check:format": "oxfmt --check",
+    "check:lint": "oxlint --type-aware --deny-warnings",
+    "check:package": "publint run --strict",
+    "check:purity": "bun scripts/check-purity.ts",
+    "check:types": "tsrs --noEmit --fast",
+    "check:types-d": "vitest run --typecheck --typecheck.only --typecheck.checker tsrs --typecheck.tsconfig ./tsconfig.json",
     "fix": "bun run fix:format && bun run fix:lint",
     "fix:format": "oxfmt --write",
     "fix:lint": "oxlint --type-aware --fix-dangerously --deny-warnings",
-    "check": "bun run check:format && bun run check:lint && bun run check:purity && bun run check:types && bun run check:types-d && bun run test && bun run check:package && bun run check:exports",
-    "check:format": "oxfmt --check",
-    "check:purity": "bun scripts/check-purity.ts",
-    "check:lint": "oxlint --type-aware --deny-warnings",
-    "check:types": "tsgo",
-    "check:types-d": "vitest run --typecheck",
-    "check:package": "publint run --strict",
-    "check:exports": "attw --pack . --profile esm-only"
+    "postinstall": "effect-tsgo patch --typescript=false --tsrs",
+    "prebuild": "bun run build:clean",
+    "prepack": "bun run build",
+    "test": "bun test src tests",
+    "test:coverage": "bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage src tests"
   },
   "dependencies": {
-    "effect": "^3.19.19"
+    "@effect/platform-bun": "4.1.2",
+    "effect": "4.1.2"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.2",
-    "@tsconfig/node24": "^24.0.4",
-    "@tsconfig/strictest": "2.0.8",
-    "@types/bun": "^1.3.10",
+    "@effect/tsgo": "0.67.5",
+    "@jasonkuhrt/config-presets": "file:../config-presets",
+    "@types/bun": "1.4.4",
     "@types/node": "^25.3.5",
     "@types/vscode": "^1.100.0",
-    "@typescript/native-preview": "7.0.0-dev.20260306.1",
+    "fast-check": "3.23.2",
     "lint-staged": "^16.4.0",
-    "oxfmt": "^0.36.0",
-    "oxlint": "^1.51.0",
-    "oxlint-tsgolint": "^0.16.0",
+    "oxfmt": "0.77.0",
+    "oxlint": "1.92.0",
     "publint": "^0.3.18",
+    "tsrs": "0.23.0-ts7.1.0-beta",
     "tsx": "^4.19.2",
-    "typescript": "5.9.3",
     "vitest": "^4.1.6"
   }
 }

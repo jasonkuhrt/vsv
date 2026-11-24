@@ -1,5 +1,7 @@
 # vsv — Coldstart Spec (Derisked)
 
+This document records the original scaffolding plan. The [README](./README.md) describes the current Effect 4 runtime, test layer, and compiler.
+
 You are a coldstart agent. Your task is to scaffold and implement the initial version of **`@jasonkuhrt/vsv`**, a personal SDK for VSCode extension authoring on Jason Kuhrt's machine. Read this entire spec, especially §0, before doing anything.
 
 ---
@@ -185,13 +187,16 @@ Single-package repo (no monorepo). Consumer extensions live in sibling directori
 ### 5.1 Use `Schema.TaggedClass` for named models
 
 ```typescript
-import { Schema } from 'effect'
+import { Schema } from 'effect';
 
-export class CommandDecl extends Schema.TaggedClass<CommandDecl>()('CommandDecl', {
-  id: Schema.NonEmptyTrimmedString,
-  args: Schema.Unknown,
-  result: Schema.Unknown,
-}) {}
+export class CommandDecl extends Schema.TaggedClass<CommandDecl>()(
+  'CommandDecl',
+  {
+    id: Schema.NonEmptyTrimmedString,
+    args: Schema.Unknown,
+    result: Schema.Unknown,
+  },
+) {}
 ```
 
 ### 5.2 Construct via `.make`, never via plain object literals
@@ -375,15 +380,18 @@ Note: NO `vscode` in `peerDependencies` (the `vscode` module is not on npm; host
 See §5 for conventions. Full sketch of `src/lib/manifest/schema.ts`:
 
 ```typescript
-import { Schema } from 'effect'
+import { Schema } from 'effect';
 
-export class CommandDecl extends Schema.TaggedClass<CommandDecl>()('CommandDecl', {
-  id: Schema.NonEmptyTrimmedString,
-  args: Schema.Unknown,
-  result: Schema.Unknown,
-  title: Schema.optional(Schema.String),
-  category: Schema.optional(Schema.String),
-}) {}
+export class CommandDecl extends Schema.TaggedClass<CommandDecl>()(
+  'CommandDecl',
+  {
+    id: Schema.NonEmptyTrimmedString,
+    args: Schema.Unknown,
+    result: Schema.Unknown,
+    title: Schema.optional(Schema.String),
+    category: Schema.optional(Schema.String),
+  },
+) {}
 
 export class ExternalCommandDecl extends Schema.TaggedClass<ExternalCommandDecl>()(
   'ExternalCommandDecl',
@@ -395,11 +403,14 @@ export class ExternalCommandDecl extends Schema.TaggedClass<ExternalCommandDecl>
   },
 ) {}
 
-export class ContextKeyDecl extends Schema.TaggedClass<ContextKeyDecl>()('ContextKeyDecl', {
-  name: Schema.NonEmptyTrimmedString,
-  valueType: Schema.Unknown,
-  defaultValue: Schema.optional(Schema.Unknown),
-}) {}
+export class ContextKeyDecl extends Schema.TaggedClass<ContextKeyDecl>()(
+  'ContextKeyDecl',
+  {
+    name: Schema.NonEmptyTrimmedString,
+    valueType: Schema.Unknown,
+    defaultValue: Schema.optional(Schema.Unknown),
+  },
+) {}
 
 export class ConfigDecl extends Schema.TaggedClass<ConfigDecl>()('ConfigDecl', {
   key: Schema.NonEmptyTrimmedString,
@@ -433,8 +444,8 @@ export class Manifest extends Schema.TaggedClass<Manifest>()('Manifest', {
 `src/lib/manifest/define.ts`:
 
 ```typescript
-import { Manifest } from './schema.ts'
-export const defineManifest = Manifest.make
+import { Manifest } from './schema.ts';
+export const defineManifest = Manifest.make;
 ```
 
 ## 9. Runtime wrappers
@@ -443,10 +454,13 @@ Primary API: `createRuntime<CommandRegistry, ContextKeyRegistry, ...>()`. Indivi
 
 ```typescript
 // src/lib/runtime/create.ts
-import * as vscode from 'vscode'
+import * as vscode from 'vscode';
 
-export type CommandRegistryShape = Record<string, { args: unknown; result: unknown }>
-export type ContextKeyRegistryShape = Record<string, unknown>
+export type CommandRegistryShape = Record<
+  string,
+  { args: unknown; result: unknown }
+>;
+export type ContextKeyRegistryShape = Record<string, unknown>;
 // ... one per registry type
 
 export const createRuntime = <
@@ -462,31 +476,35 @@ export const createRuntime = <
   executeCommand: <Id extends keyof CR & string>(
     id: Id,
     args: CR[Id]['args'],
-  ): Promise<CR[Id]['result']> => Promise.resolve(vscode.commands.executeCommand(id, args)),
+  ): Promise<CR[Id]['result']> =>
+    Promise.resolve(vscode.commands.executeCommand(id, args)),
 
   executeCommandRaw: (id: string, ...args: unknown[]): Promise<unknown> =>
     Promise.resolve(vscode.commands.executeCommand(id, ...args)),
 
-  defineContextKey: <K extends keyof CKR & string>(key: K, initialValue: CKR[K]) => {
-    let current = initialValue
-    const listeners = new Set<(v: CKR[K]) => void>()
-    vscode.commands.executeCommand('setContext', key, current)
+  defineContextKey: <K extends keyof CKR & string>(
+    key: K,
+    initialValue: CKR[K],
+  ) => {
+    let current = initialValue;
+    const listeners = new Set<(v: CKR[K]) => void>();
+    vscode.commands.executeCommand('setContext', key, current);
     return {
       set: async (value: CKR[K]) => {
-        current = value
-        await vscode.commands.executeCommand('setContext', key, value)
-        listeners.forEach((l) => l(value))
+        current = value;
+        await vscode.commands.executeCommand('setContext', key, value);
+        listeners.forEach((l) => l(value));
       },
       get: () => current,
       onChange: (cb: (v: CKR[K]) => void): vscode.Disposable => {
-        listeners.add(cb)
-        return { dispose: () => listeners.delete(cb) }
+        listeners.add(cb);
+        return { dispose: () => listeners.delete(cb) };
       },
-    }
+    };
   },
 
   // defineConfig, defineEvent, defineState, quickPick, disposables — implement per §9 conventions below
-})
+});
 ```
 
 Implement full set: `defineCommand`, `executeCommand`, `executeCommandRaw`, `defineContextKey`, `defineConfig`, `defineEvent`, `defineState`, `quickPick`, `disposables`.
@@ -595,18 +613,18 @@ export const commands = {
     /* ... */
   },
   getCommands: async (filterInternal?: boolean) => [] as string[],
-}
+};
 
 export const workspace = {
   getConfiguration: (section?: string) => ({
     /* WorkspaceConfiguration surface */
   }),
-}
+};
 
 export const window = {
   showQuickPick: async (items: unknown, opts?: unknown) => undefined,
   // ... as needed
-}
+};
 
 export class EventEmitter<T> {
   /* fire, event, dispose */
@@ -614,14 +632,18 @@ export class EventEmitter<T> {
 export class Disposable {
   constructor(public callOnDispose: () => void) {}
   dispose() {
-    this.callOnDispose()
+    this.callOnDispose();
   }
   static from(...disposables: Disposable[]): Disposable {
     /* ... */
   }
 }
 
-export const ConfigurationTarget = { Global: 1, Workspace: 2, WorkspaceFolder: 3 } as const
+export const ConfigurationTarget = {
+  Global: 1,
+  Workspace: 2,
+  WorkspaceFolder: 3,
+} as const;
 // ... other enums/classes as needed
 ```
 
@@ -642,16 +664,16 @@ export const __state = {
 `src/lib/runtime-test/install-mock.ts`:
 
 ```typescript
-import { mock } from 'bun:test'
-import * as vscodeMock from './vscode-mock.ts'
+import { mock } from 'bun:test';
+import * as vscodeMock from './vscode-mock.ts';
 
 export const installVSCodeMock = () => {
-  mock.module('vscode', () => vscodeMock)
+  mock.module('vscode', () => vscodeMock);
   return {
     reset: () => vscodeMock.__state.reset(),
     state: vscodeMock.__state,
-  }
-}
+  };
+};
 ```
 
 ### 12.3 ExtensionContext mock
@@ -665,18 +687,19 @@ export const createTestExtensionContext = () => ({
   workspaceState: createMockMemento(),
   extensionUri: { fsPath: '/test', toString: () => 'test:/' },
   // ... stub others as needed
-})
+});
 
 const createMockMemento = () => {
-  const store = new Map<string, unknown>()
+  const store = new Map<string, unknown>();
   return {
-    get: <T>(key: string, defaultValue?: T) => (store.get(key) as T) ?? defaultValue,
+    get: <T>(key: string, defaultValue?: T) =>
+      (store.get(key) as T) ?? defaultValue,
     update: async (key: string, value: unknown) => {
-      store.set(key, value)
+      store.set(key, value);
     },
     keys: () => Array.from(store.keys()),
-  }
-}
+  };
+};
 ```
 
 ### 12.4 Matchers
@@ -684,21 +707,24 @@ const createMockMemento = () => {
 `src/lib/runtime-test/matchers.ts`:
 
 ```typescript
-import { expect } from 'bun:test'
+import { expect } from 'bun:test';
 
 expect.extend({
-  toHaveRegisteredCommand(received: ReturnType<typeof installVSCodeMock>, id: string) {
-    const has = received.state.getRegisteredCommands().includes(id)
+  toHaveRegisteredCommand(
+    received: ReturnType<typeof installVSCodeMock>,
+    id: string,
+  ) {
+    const has = received.state.getRegisteredCommands().includes(id);
     return {
       pass: has,
       message: () =>
         has
           ? `Expected vscode mock not to have command ${id}`
           : `Expected vscode mock to have command ${id}, got [${received.state.getRegisteredCommands().join(', ')}]`,
-    }
+    };
   },
   // toHaveExecutedCommand, toHaveContextKey, etc.
-})
+});
 ```
 
 ### 12.5 Spies
@@ -709,14 +735,14 @@ expect.extend({
 export const spyOnCommands = () => {
   // Returns an object that records command executions made through the vscode mock
   // Backed by the mock's __state.getExecutedCommands()
-}
+};
 
 export const withContextKeys = async (
   keys: Record<string, unknown>,
   fn: () => Promise<void>,
 ): Promise<void> => {
   // Set context keys, run fn, restore
-}
+};
 ```
 
 ---
@@ -731,20 +757,20 @@ Reads consumer's `package.json` to determine CJS vs ESM (by `"type": "module"` p
 
 ```javascript
 // bootstrap.cjs — generated by vsv, do not edit
-require('tsx/cjs')
-module.exports = require('./src/extension.ts')
+require('tsx/cjs');
+module.exports = require('./src/extension.ts');
 ```
 
 ### ESM output
 
 ```javascript
 // bootstrap.mjs — generated by vsv, do not edit
-import { register } from 'node:module'
-import { pathToFileURL } from 'node:url'
-register('tsx/esm', pathToFileURL(import.meta.url))
-const mod = await import('./src/extension.ts')
-export const activate = mod.activate
-export const deactivate = mod.deactivate
+import { register } from 'node:module';
+import { pathToFileURL } from 'node:url';
+register('tsx/esm', pathToFileURL(import.meta.url));
+const mod = await import('./src/extension.ts');
+export const activate = mod.activate;
+export const deactivate = mod.deactivate;
 ```
 
 Generator:
@@ -790,8 +816,8 @@ For `vsv dev`, the watch loop uses Bun's native `fs.watch` (same API as Node but
 ```typescript
 // TODO: populate from VSCode source at https://github.com/microsoft/vscode/blob/main/src/vs/workbench/browser/actions/layoutActions.ts (and siblings)
 // For v1, empty.
-export const BuiltinCommands = {} as const
-export type BuiltinCommandRegistry = typeof BuiltinCommands
+export const BuiltinCommands = {} as const;
+export type BuiltinCommandRegistry = typeof BuiltinCommands;
 ```
 
 `src/lib/builtin-catalog/context-keys.ts`:
@@ -799,8 +825,8 @@ export type BuiltinCommandRegistry = typeof BuiltinCommands
 ```typescript
 // TODO: populate from VSCode context key registrations.
 // For v1, empty.
-export const BuiltinContextKeys = {} as const
-export type BuiltinContextKeyRegistry = typeof BuiltinContextKeys
+export const BuiltinContextKeys = {} as const;
+export type BuiltinContextKeyRegistry = typeof BuiltinContextKeys;
 ```
 
 Codegen merges these empty objects into the emitted registries. Once populated later, consumers automatically pick them up.

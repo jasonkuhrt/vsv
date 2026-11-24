@@ -18,19 +18,24 @@
 // command reference (see Phase B research). Imports only `effect` +
 // `#lib/manifest`, so this module stays in vsv's pure subset.
 
-import { Schema } from 'effect'
-import { ExternalCommandDecl } from '#lib/manifest/decls/external-command'
+import { Schema } from 'effect';
+import { ExternalCommandDecl } from '#lib/manifest/decls/external-command';
 
-const fromExtension = 'vscode core'
+const fromExtension = 'vscode core';
 
 const coreCommand = <const Id extends string>(id: Id) =>
-  ExternalCommandDecl({ id, args: Schema.Unknown, result: Schema.Void, fromExtension })
+  ExternalCommandDecl({
+    id,
+    args: Schema.Unknown,
+    result: Schema.Void,
+    fromExtension,
+  });
 
 /**
- * The complete catalog of VS Code **core** command ids as
+ * @description The complete catalog of VS Code **core** command ids as
  * `ExternalCommandDecl`s. Seed `defineManifest({ externalCommands: [...] })`
- * with this (spread the literal array so the const tuple shape survives for
- * the runtime's typed `executeExternalCommand`).
+ * with this (spread the literal array so the const tuple shape survives for the
+ * runtime's typed `executeExternalCommand`).
  */
 export const coreCommands = [
   coreCommand('actions.find'),
@@ -738,7 +743,9 @@ export const coreCommands = [
   coreCommand('workbench.debug.viewlet.action.reapplyBreakpointsAction'),
   coreCommand('workbench.debug.viewlet.action.removeAllBreakpoints'),
   coreCommand('workbench.debug.viewlet.action.removeBreakpoint'),
-  coreCommand('workbench.debug.viewlet.action.toggleBreakpointsActivatedAction'),
+  coreCommand(
+    'workbench.debug.viewlet.action.toggleBreakpointsActivatedAction',
+  ),
   coreCommand('workbench.debug.viewlet.action.toggleBreakpointsPresentation'),
   coreCommand('workbench.editSessions.actions.delete'),
   coreCommand('workbench.editSessions.actions.deleteAll'),
@@ -751,10 +758,18 @@ export const coreCommands = [
   coreCommand('workbench.editSessions.actions.store'),
   coreCommand('workbench.editSessions.actions.storeCurrent'),
   coreCommand('workbench.explorer.fileView.focus'),
-  coreCommand('workbench.extensions.action.addExtensionToWorkspaceRecommendations'),
-  coreCommand('workbench.extensions.action.addToWorkspaceFolderIgnoredRecommendations'),
-  coreCommand('workbench.extensions.action.addToWorkspaceFolderRecommendations'),
-  coreCommand('workbench.extensions.action.addToWorkspaceIgnoredRecommendations'),
+  coreCommand(
+    'workbench.extensions.action.addExtensionToWorkspaceRecommendations',
+  ),
+  coreCommand(
+    'workbench.extensions.action.addToWorkspaceFolderIgnoredRecommendations',
+  ),
+  coreCommand(
+    'workbench.extensions.action.addToWorkspaceFolderRecommendations',
+  ),
+  coreCommand(
+    'workbench.extensions.action.addToWorkspaceIgnoredRecommendations',
+  ),
   coreCommand('workbench.extensions.action.addToWorkspaceRecommendations'),
   coreCommand('workbench.extensions.action.checkForUpdates'),
   coreCommand('workbench.extensions.action.clearExtensionsSearchResults'),
@@ -783,7 +798,9 @@ export const coreCommands = [
   coreCommand('workbench.extensions.action.installExtensions'),
   coreCommand('workbench.extensions.action.installPrereleaseAndDonotSync'),
   coreCommand('workbench.extensions.action.installUnsigned'),
-  coreCommand('workbench.extensions.action.installWorkspaceRecommendedExtensions'),
+  coreCommand(
+    'workbench.extensions.action.installWorkspaceRecommendedExtensions',
+  ),
   coreCommand('workbench.extensions.action.listBuiltInExtensions'),
   coreCommand('workbench.extensions.action.manageAccountPreferences'),
   coreCommand('workbench.extensions.action.manageAuthorizedExtensionURIs'),
@@ -792,7 +809,9 @@ export const coreCommands = [
   coreCommand('workbench.extensions.action.openInstalledWebExtensionsResource'),
   coreCommand('workbench.extensions.action.recentlyPublishedExtensions'),
   coreCommand('workbench.extensions.action.refreshExtension'),
-  coreCommand('workbench.extensions.action.removeExtensionFromWorkspaceRecommendations'),
+  coreCommand(
+    'workbench.extensions.action.removeExtensionFromWorkspaceRecommendations',
+  ),
   coreCommand('workbench.extensions.action.showDisabledExtensions'),
   coreCommand('workbench.extensions.action.showEnabledExtensions'),
   coreCommand('workbench.extensions.action.showLanguageExtensions'),
@@ -884,7 +903,9 @@ export const coreCommands = [
   coreCommand('workbench.views.agentPlugins.default.marketplace'),
   coreCommand('workbench.views.agentPlugins.marketplace'),
   coreCommand('workbench.views.extensions.builtinFeatureExtensions'),
-  coreCommand('workbench.views.extensions.builtinProgrammingLanguageExtensions'),
+  coreCommand(
+    'workbench.views.extensions.builtinProgrammingLanguageExtensions',
+  ),
   coreCommand('workbench.views.extensions.builtinThemeExtensions'),
   coreCommand('workbench.views.extensions.deprecatedExtensions'),
   coreCommand('workbench.views.extensions.disabled'),
@@ -900,7 +921,9 @@ export const coreCommands = [
   coreCommand('workbench.views.extensions.searchInstalled'),
   coreCommand('workbench.views.extensions.searchRecentlyUpdated'),
   coreCommand('workbench.views.extensions.searchWorkspaceUnsupported'),
-  coreCommand('workbench.views.extensions.untrustedPartiallySupportedExtensions'),
+  coreCommand(
+    'workbench.views.extensions.untrustedPartiallySupportedExtensions',
+  ),
   coreCommand('workbench.views.extensions.untrustedUnsupportedExtensions'),
   coreCommand('workbench.views.extensions.virtualPartiallySupportedExtensions'),
   coreCommand('workbench.views.extensions.virtualUnsupportedExtensions'),
@@ -908,4 +931,4 @@ export const coreCommands = [
   coreCommand('workbench.views.mcp.default.welcomeView'),
   coreCommand('workbench.views.mcp.marketplace'),
   coreCommand('workbench.views.mcp.welcomeView'),
-] as const
+] as const;

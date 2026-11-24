@@ -17,21 +17,23 @@
 // `#lib/manifest` + the inlined `#lib/schema/open-enum`, so this module stays
 // inside vsv's pure library subset and passes the Phase-A purity guard.
 
-import { Schema } from 'effect'
-import { ExternalContextKeyDecl } from '#lib/manifest/decls/external-context-key'
-import { OpenEnum } from '#lib/schema/open-enum'
+import { Schema } from 'effect';
+import { ExternalContextKeyDecl } from '#lib/manifest/decls/external-context-key';
+import { OpenEnum } from '#lib/schema/open-enum';
 
-const ownedBy = 'vscode core'
+const ownedBy = 'vscode core';
 
 const boolKey = <const N extends string>(name: N) =>
-  ExternalContextKeyDecl({ name, valueType: Schema.Boolean, ownedBy })
+  ExternalContextKeyDecl({ name, valueType: Schema.Boolean, ownedBy });
 
 const numberKey = <const N extends string>(name: N) =>
-  ExternalContextKeyDecl({ name, valueType: Schema.Number, ownedBy })
+  ExternalContextKeyDecl({ name, valueType: Schema.Finite, ownedBy });
 
 // ─── Boolean context keys ─────────────────────────────────────────────────
 
-/** VS Code core context keys whose value domain is a plain boolean. */
+/**
+ * @description VS Code core context keys whose value domain is a plain boolean.
+ */
 export const booleanContextKeys = [
   // Editor focus / input
   boolKey('inputFocus'),
@@ -214,55 +216,68 @@ export const booleanContextKeys = [
   boolKey('accessibleViewOnLastLine'),
   boolKey('accessibleViewInCodeBlock'),
   boolKey('accessibleViewContainsCodeBlocks'),
-] as const
+] as const;
 
 // ─── Numeric context keys ─────────────────────────────────────────────────
 
-/** VS Code core context keys whose value domain is a number. */
+/**
+ * @description VS Code core context keys whose value domain is a number.
+ */
 export const numericContextKeys = [
   numberKey('workspaceFolderCount'),
   numberKey('groupEditorsCount'),
   numberKey('activeEditorGroupIndex'),
-] as const
+] as const;
 
 // ─── Closed string context keys ───────────────────────────────────────────
 // Genuinely fixed, fully enumerable string domains — `Schema.Literal(...)`.
 
-/** The kind of workspace opened. */
+/**
+ * @description The kind of workspace opened.
+ */
 export const workbenchState = ExternalContextKeyDecl({
   name: 'workbenchState',
-  valueType: Schema.Literal('empty', 'folder', 'workspace'),
+  valueType: Schema.Literals(['empty', 'folder', 'workspace']),
   ownedBy,
-})
+});
 
-/** Style of the window title bar (platform + configuration). */
+/**
+ * @description Style of the window title bar (platform + configuration).
+ */
 export const titleBarStyle = ExternalContextKeyDecl({
   name: 'titleBarStyle',
-  valueType: Schema.Literal('custom', 'native'),
+  valueType: Schema.Literals(['custom', 'native']),
   ownedBy,
-})
+});
 
-/** Position of the panel (currently fixed to `bottom`). */
+/**
+ * @description Position of the panel (currently fixed to `bottom`).
+ */
 export const panelPosition = ExternalContextKeyDecl({
   name: 'panelPosition',
   valueType: Schema.Literal('bottom'),
   ownedBy,
-})
+});
 
-/** Alignment of the panel content. */
+/**
+ * @description Alignment of the panel content.
+ */
 export const panelAlignment = ExternalContextKeyDecl({
   name: 'panelAlignment',
-  valueType: Schema.Literal('center', 'left', 'right', 'justify'),
+  valueType: Schema.Literals(['center', 'left', 'right', 'justify']),
   ownedBy,
-})
+});
 
-/** VS Code core context keys whose value domain is a closed string literal set. */
+/**
+ * @description VS Code core context keys whose value domain is a closed string
+ * literal set.
+ */
 export const closedStringContextKeys = [
   workbenchState,
   titleBarStyle,
   panelPosition,
   panelAlignment,
-] as const
+] as const;
 
 // ─── Open string context keys ─────────────────────────────────────────────
 // Known core membership, extensible at runtime — `OpenEnum(name, members)`.
@@ -270,10 +285,14 @@ export const closedStringContextKeys = [
 // (a new language id, a custom scheme, an extension's view id, …) is still a
 // legal `eq` argument via the open-string escape on the authoring projection.
 
-const openEnumKey = <const N extends string, const Members extends Record<string, string>>(
+const openEnumKey = <
+  const N extends string,
+  const Members extends Record<string, string>,
+>(
   name: N,
   members: Members,
-) => ExternalContextKeyDecl({ name, valueType: OpenEnum(name, members), ownedBy })
+) =>
+  ExternalContextKeyDecl({ name, valueType: OpenEnum(name, members), ownedBy });
 
 // Some open keys have NO known core membership to seed (`resourceFilename`,
 // `view`, `viewItem`, …) — their value is an arbitrary runtime string. An
@@ -282,9 +301,12 @@ const openEnumKey = <const N extends string, const Members extends Record<string
 // treats a `Schema.String` key as an open-string key: `eq` accepts any string
 // and `match` (regex) becomes available — exactly right for these.
 const stringKey = <const N extends string>(name: N) =>
-  ExternalContextKeyDecl({ name, valueType: Schema.String, ownedBy })
+  ExternalContextKeyDecl({ name, valueType: Schema.String, ownedBy });
 
-/** Language identifier of the active editor (dynamically filled from registered languages). */
+/**
+ * @description Language identifier of the active editor (dynamically filled
+ * from registered languages).
+ */
 export const editorLangId = openEnumKey('editorLangId', {
   typescript: 'typescript',
   javascript: 'javascript',
@@ -309,9 +331,12 @@ export const editorLangId = openEnumKey('editorLangId', {
   shellscript: 'shellscript',
   dockerfile: 'dockerfile',
   plaintext: 'plaintext',
-})
+});
 
-/** Language identifier guessed from the resource (same domain as `editorLangId`). */
+/**
+ * @description Language identifier guessed from the resource (same domain as
+ * `editorLangId`).
+ */
 export const resourceLangId = openEnumKey('resourceLangId', {
   typescript: 'typescript',
   javascript: 'javascript',
@@ -336,9 +361,11 @@ export const resourceLangId = openEnumKey('resourceLangId', {
   shellscript: 'shellscript',
   dockerfile: 'dockerfile',
   plaintext: 'plaintext',
-})
+});
 
-/** File extension of the resource (determined by the file system). */
+/**
+ * @description File extension of the resource (determined by the file system).
+ */
 export const resourceExtname = openEnumKey('resourceExtname', {
   '.ts': '.ts',
   '.tsx': '.tsx',
@@ -354,9 +381,11 @@ export const resourceExtname = openEnumKey('resourceExtname', {
   '.yaml': '.yaml',
   '.yml': '.yml',
   '.xml': '.xml',
-})
+});
 
-/** URI scheme of the current resource (extensible by extensions). */
+/**
+ * @description URI scheme of the current resource (extensible by extensions).
+ */
 export const resourceScheme = openEnumKey('resourceScheme', {
   file: 'file',
   untitled: 'untitled',
@@ -380,27 +409,39 @@ export const resourceScheme = openEnumKey('resourceScheme', {
   command: 'command',
   inmemory: 'inmemory',
   'webview-panel': 'webview-panel',
-})
+});
 
-/** File name of the resource (basename) — open by file system. */
-export const resourceFilename = stringKey('resourceFilename')
+/**
+ * @description File name of the resource (basename) — open by file system.
+ */
+export const resourceFilename = stringKey('resourceFilename');
 
-/** Folder name containing the resource — open by file system hierarchy. */
-export const resourceDirname = stringKey('resourceDirname')
+/**
+ * @description Folder name containing the resource — open by file system
+ * hierarchy.
+ */
+export const resourceDirname = stringKey('resourceDirname');
 
-/** Full path of the resource — open by file system. */
-export const resourcePath = stringKey('resourcePath')
+/**
+ * @description Full path of the resource — open by file system.
+ */
+export const resourcePath = stringKey('resourcePath');
 
-/** Identifier of the active viewlet (sidebar container) — extensible by extensions. */
+/**
+ * @description Identifier of the active viewlet (sidebar container) —
+ * extensible by extensions.
+ */
 export const activeViewlet = openEnumKey('activeViewlet', {
   explorer: 'workbench.view.explorer',
   search: 'workbench.view.search',
   scm: 'workbench.view.scm',
   debug: 'workbench.view.debug',
   extensions: 'workbench.view.extensions',
-})
+});
 
-/** Identifier of the active panel — extensible by extensions. */
+/**
+ * @description Identifier of the active panel — extensible by extensions.
+ */
 export const activePanel = openEnumKey('activePanel', {
   terminal: 'terminal',
   output: 'output',
@@ -408,48 +449,73 @@ export const activePanel = openEnumKey('activePanel', {
   debugConsole: 'debug.console',
   ports: 'ports',
   comments: 'comments',
-})
+});
 
-/** viewType of the currently active custom editor — extensible by extensions. */
+/**
+ * @description viewType of the currently active custom editor — extensible by
+ * extensions.
+ */
 export const activeCustomEditorId = openEnumKey('activeCustomEditorId', {
   markdownPreview: 'vscode.markdown.preview.editor',
-})
+});
 
-/** viewType of the currently active webview panel — extensible by extensions. */
-export const activeWebviewPanelId = stringKey('activeWebviewPanelId')
+/**
+ * @description viewType of the currently active webview panel — extensible by
+ * extensions.
+ */
+export const activeWebviewPanelId = stringKey('activeWebviewPanelId');
 
-/** Identifier of the view that has keyboard focus — extensible by extensions. */
+/**
+ * @description Identifier of the view that has keyboard focus — extensible by
+ * extensions.
+ */
 export const focusedView = openEnumKey('focusedView', {
   explorerFileView: 'workbench.explorer.fileView',
-})
+});
 
-/** Identifier of the current view context in a TreeView — dynamic by view id. */
-export const view = stringKey('view')
+/**
+ * @description Identifier of the current view context in a TreeView — dynamic
+ * by view id.
+ */
+export const view = stringKey('view');
 
-/** Context value of a tree view item — set by the data provider. */
-export const viewItem = stringKey('viewItem')
+/**
+ * @description Context value of a tree view item — set by the data provider.
+ */
+export const viewItem = stringKey('viewItem');
 
-/** Name of the remote the window is connected to (empty if not remote). */
-export const remoteName = stringKey('remoteName')
+/**
+ * @description Name of the remote the window is connected to (empty if not
+ * remote).
+ */
+export const remoteName = stringKey('remoteName');
 
-/** Scheme of the current workspace if it is from a virtual file system. */
-export const virtualWorkspace = stringKey('virtualWorkspace')
+/**
+ * @description Scheme of the current workspace if it is from a virtual file
+ * system.
+ */
+export const virtualWorkspace = stringKey('virtualWorkspace');
 
-/** Quality type of VS Code — determined by the product service. */
+/**
+ * @description Quality type of VS Code — determined by the product service.
+ */
 export const productQualityType = openEnumKey('productQualityType', {
   stable: 'stable',
   insiders: 'insiders',
   exploration: 'exploration',
   dev: 'dev',
-})
-
-/** Identifier of the embedder according to the product service. */
-export const embedderIdentifier = stringKey('embedderIdentifier')
+});
 
 /**
- * VS Code core context keys with a known core membership that stays open to
- * runtime-registered values — `OpenEnum(name, members)`. The known members
- * autocomplete on `eq` while an unmodeled value is still accepted.
+ * @description Identifier of the embedder according to the product service.
+ */
+export const embedderIdentifier = stringKey('embedderIdentifier');
+
+/**
+ * @description VS Code core context keys with a known core membership that
+ * stays open to runtime-registered values — `OpenEnum(name, members)`. The
+ * known members autocomplete on `eq` while an unmodeled value is still
+ * accepted.
  */
 export const openEnumContextKeys = [
   editorLangId,
@@ -461,12 +527,13 @@ export const openEnumContextKeys = [
   activeCustomEditorId,
   focusedView,
   productQualityType,
-] as const
+] as const;
 
 /**
- * VS Code core context keys whose value is an arbitrary runtime string with no
- * enumerable core membership — `Schema.String`. The `When` builder treats these
- * as open-string keys (any-string `eq`, `match` regex available).
+ * @description VS Code core context keys whose value is an arbitrary runtime
+ * string with no enumerable core membership — `Schema.String`. The `When`
+ * builder treats these as open-string keys (any-string `eq`, `match` regex
+ * available).
  */
 export const plainStringContextKeys = [
   resourceFilename,
@@ -478,15 +545,21 @@ export const plainStringContextKeys = [
   remoteName,
   virtualWorkspace,
   embedderIdentifier,
-] as const
+] as const;
 
-/** All open-domain (non-closed) string context keys — OpenEnum-backed + plain string. */
-export const openStringContextKeys = [...openEnumContextKeys, ...plainStringContextKeys] as const
+/**
+ * @description All open-domain (non-closed) string context keys —
+ * OpenEnum-backed + plain string.
+ */
+export const openStringContextKeys = [
+  ...openEnumContextKeys,
+  ...plainStringContextKeys,
+] as const;
 
 // ─── Full catalog ─────────────────────────────────────────────────────────
 
 /**
- * The complete catalog of VS Code **core** context keys as
+ * @description The complete catalog of VS Code **core** context keys as
  * `ExternalContextKeyDecl`s — boolean, numeric, closed-string, and open-string
  * domains combined. Seed `defineManifest({ externalContextKeys: [...] })` with
  * this (spread the literal arrays so the const tuple shape survives for the
@@ -497,4 +570,4 @@ export const coreContextKeys = [
   ...numericContextKeys,
   ...closedStringContextKeys,
   ...openStringContextKeys,
-] as const
+] as const;

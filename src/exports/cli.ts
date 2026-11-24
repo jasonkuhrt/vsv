@@ -1,5 +1,21 @@
 #!/usr/bin/env bun
-import { runCli } from '#lib/cli/main'
+import { BunRuntime, BunServices } from '@effect/platform-bun';
+import { Effect, Exit, Runtime, Stdio } from 'effect';
+import { runCli } from '#lib/cli/main';
 
-const exitCode = await runCli(process.argv.slice(2))
-process.exit(exitCode)
+BunRuntime.runMain(
+  Stdio.Stdio.pipe(
+    Effect.flatMap((stdio) => stdio.args),
+    Effect.flatMap((args) => runCli(args, import.meta.filename)),
+    Effect.provide(BunServices.layer),
+  ),
+  {
+    teardown: (exit, onExit) => {
+      if (Exit.isSuccess(exit) && typeof exit.value === 'number') {
+        onExit(exit.value);
+      } else {
+        Runtime.defaultTeardown(exit, onExit);
+      }
+    },
+  },
+);

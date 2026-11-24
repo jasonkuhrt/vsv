@@ -1,19 +1,30 @@
-import { beforeEach, describe, expect, test } from 'bun:test'
-import { Data, Effect, Exit, Schema } from 'effect'
-import * as nodeFs from 'node:fs'
-import * as os from 'node:os'
-import * as path from 'node:path'
-import { CommandDecl } from '../../manifest/decls/command.ts'
-import { ConfigDecl } from '../../manifest/decls/config.ts'
-import { ContextKeyDecl } from '../../manifest/decls/context-key.ts'
-import { ExternalCommandDecl } from '../../manifest/decls/external-command.ts'
-import { ForeignConfigDecl } from '../../manifest/decls/foreign-config.ts'
-import { StateDecl } from '../../manifest/decls/state.ts'
-import { defineManifest } from '../../manifest/define.ts'
-import { createTestExtensionContext } from '../../runtime-test/create-context.ts'
-import { installVSCodeMock } from '../../runtime-test/install-mock.ts'
-import '../../runtime-test/matchers.ts'
-import { createRuntime } from '../create.ts'
+import { beforeEach, describe, expect, test } from 'bun:test';
+import { BunServices } from '@effect/platform-bun';
+import type { Scope } from 'effect';
+import {
+  Array,
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Logger,
+  Option,
+  Path,
+  Schema,
+} from 'effect';
+import { CommandDecl } from '../../manifest/decls/command.ts';
+import { ConfigDecl } from '../../manifest/decls/config.ts';
+import { ContextKeyDecl } from '../../manifest/decls/context-key.ts';
+import { ExternalCommandDecl } from '../../manifest/decls/external-command.ts';
+import { ForeignConfigDecl } from '../../manifest/decls/foreign-config.ts';
+import { StateDecl } from '../../manifest/decls/state.ts';
+import { defineManifest } from '../../manifest/define.ts';
+import { createTestExtensionContext } from '../../runtime-test/create-context.ts';
+import { installVSCodeMock } from '../../runtime-test/install-mock.ts';
+import { testEffect } from '../../runtime-test/test-effect.ts';
+import * as vs from '../../runtime-test/vscode-mock.ts';
+import { createRuntime } from '../create.ts';
 import {
   ClipboardError,
   CommandExecutionError,
@@ -23,19 +34,50 @@ import {
   FileNotFoundError,
   StateUpdateError,
   UnsupportedSchemeError,
-} from '../errors.ts'
-import { ConfigurationTarget } from '../values.ts'
+} from '../errors.ts';
+import { VSCodeHost, VSCodeHostError } from '../vscode-host.ts';
+import type { VSCodeHostApi } from '../vscode-host.ts';
 
-const vscode = installVSCodeMock()
+const vscode = installVSCodeMock();
+const { ConfigurationTarget } = vs;
+
+class TestFailure extends Schema.TaggedError<TestFailure, {}>()('TestFailure', {
+  message: Schema.String,
+}) {}
+
+const rejectHostCall = () =>
+  Effect.runPromise(
+    Effect.fail(TestFailure.make({ message: 'fixture failure' })),
+  );
+const rejectHostEffect = () =>
+  Effect.failSync(() =>
+    VSCodeHostError.make({
+      operation: 'test',
+      cause: TestFailure.make({ message: 'fixture failure' }),
+    }),
+  );
+
+const failListener = () =>
+  Effect.runSync(Effect.die(TestFailure.make({ message: 'listener failure' })));
 
 beforeEach(() => {
-  vscode.reset()
-})
+  vscode.reset();
+});
 
 // Shared test manifest covering every runtime surface the suite exercises.
 // One source of typing — `createRuntime(testManifest)` reads every method's
 // arg/result/value type from this manifest's tuple shape via the mapped types
 // in `../registries.ts`.
+const testRuntime = <E>(
+  name: string,
+  program: Effect.Effect<void, E, BunServices.BunServices | Scope.Scope>,
+) => {
+  testEffect(
+    name,
+    program.pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+};
+
 const testManifest = defineManifest({
   name: 'vsv-test',
   publisher: 'vsv',
@@ -47,994 +89,1159 @@ const testManifest = defineManifest({
     }),
     CommandDecl({
       id: 'vsv.add',
-      args: Schema.Struct({ a: Schema.Number, b: Schema.Number }),
-      result: Schema.Number,
+      args: Schema.Struct({ a: Schema.Finite, b: Schema.Finite }),
+      result: Schema.Finite,
     }),
     CommandDecl({ id: 'vsv.fail', args: Schema.Void, result: Schema.Void }),
   ],
   contextKeys: [
     ContextKeyDecl({ name: 'vsv.isActive', valueType: Schema.Boolean }),
-    ContextKeyDecl({ name: 'vsv.mode', valueType: Schema.Literal('on', 'off') }),
+    ContextKeyDecl({
+      name: 'vsv.mode',
+      valueType: Schema.Literals(['on', 'off']),
+    }),
   ],
   config: [ConfigDecl({ key: 'enabled', valueSchema: Schema.Boolean })],
-  state: [StateDecl({ key: 'lastRun', scope: 'global', valueSchema: Schema.Number })],
+  state: [
+    StateDecl({ key: 'lastRun', scope: 'global', valueSchema: Schema.Finite }),
+  ],
   foreignConfig: [
-    ForeignConfigDecl({ fullKey: 'editor.codeLens', valueSchema: Schema.Boolean }),
-    ForeignConfigDecl({ fullKey: 'explorer.confirmDelete', valueSchema: Schema.Boolean }),
-    ForeignConfigDecl({ fullKey: 'problems.visibility', valueSchema: Schema.Boolean }),
+    ForeignConfigDecl({
+      fullKey: 'editor.codeLens',
+      valueSchema: Schema.Boolean,
+    }),
+    ForeignConfigDecl({
+      fullKey: 'explorer.confirmDelete',
+      valueSchema: Schema.Boolean,
+    }),
+    ForeignConfigDecl({
+      fullKey: 'problems.visibility',
+      valueSchema: Schema.Boolean,
+    }),
   ],
   externalCommands: [
     // No args (Schema.Void → void). Caller invokes as
     // `rt.executeExternalCommand('moveFileToTrash')` — no extra args.
-    ExternalCommandDecl({ id: 'moveFileToTrash', args: Schema.Void, result: Schema.Void }),
+    ExternalCommandDecl({
+      id: 'moveFileToTrash',
+      args: Schema.Void,
+      result: Schema.Void,
+    }),
     // Tuple args (Schema.Tuple → readonly [string]) spread positionally:
     // `rt.executeExternalCommand('list.expand', uri)`. Single-element tuple
     // is the simplest case of positional args.
     ExternalCommandDecl({
       id: 'list.expand',
-      args: Schema.Tuple(Schema.String),
+      args: Schema.Tuple([Schema.String]),
       result: Schema.Void,
     }),
     // Three positional args, returning a typed result.
     ExternalCommandDecl({
       id: 'vscode.executeDocumentRenameProvider',
-      args: Schema.Tuple(
+      args: Schema.Tuple([
         Schema.String,
-        Schema.Struct({ line: Schema.Number, character: Schema.Number }),
+        Schema.Struct({ line: Schema.Finite, character: Schema.Finite }),
         Schema.String,
-      ),
+      ]),
       result: Schema.Struct({ applied: Schema.Boolean }),
     }),
   ],
-})
+});
+
+const runtime = (layer = vscode.layer) =>
+  Effect.runSync(Effect.provide(createRuntime(testManifest), layer));
+const runtimeWith = (replace: (host: VSCodeHostApi) => VSCodeHostApi) =>
+  runtime(
+    Layer.effect(VSCodeHost, Effect.map(VSCodeHost, replace)).pipe(
+      Layer.provide(vscode.layer),
+    ),
+  );
 
 describe('createRuntime', () => {
   describe('defineCommand / executeCommand', () => {
     test('registers a typed command with an Effect handler', () => {
-      const r = createRuntime(testManifest)
-      Effect.runSync(r.defineCommand('vsv.greet', (args) => Effect.succeed(`Hello ${args.name}`)))
-      expect(vscode).toHaveRegisteredCommand('vsv.greet')
-    })
-
-    test('handler receives typed args and returns typed result', async () => {
-      const r = createRuntime(testManifest)
-      Effect.runSync(r.defineCommand('vsv.add', ({ a, b }) => Effect.succeed(a + b)))
-      const result = await Effect.runPromise(r.executeCommand('vsv.add', { a: 2, b: 3 }))
-      expect(result).toBe(5)
-    })
-
-    test('Effect handler can yield other effects mid-flow', async () => {
-      const r = createRuntime(testManifest)
+      const r = runtime();
       Effect.runSync(
-        r.defineCommand('vsv.add', ({ a, b }) =>
+        r.defineCommand('vsv.greet', (args) =>
+          Effect.succeed(`Hello ${args.name}`),
+        ),
+      );
+      expect(vscode).toHaveRegisteredCommand('vsv.greet');
+    });
+
+    testRuntime(
+      'handler receives typed args and returns typed result',
+      Effect.gen(function* () {
+        const r = runtime();
+        yield* r.defineCommand('vsv.add', ({ a, b }) => Effect.succeed(a + b));
+        const result = yield* r.executeCommand('vsv.add', { a: 2, b: 3 });
+        expect(result).toBe(5);
+      }),
+    );
+
+    testRuntime(
+      'Effect handler can yield other effects mid-flow',
+      Effect.gen(function* () {
+        const r = runtime();
+        yield* r.defineCommand('vsv.add', ({ a, b }) =>
           Effect.gen(function* () {
             // Sanity: ensure handlers can use full Effect.gen.
-            const sum = yield* Effect.succeed(a + b)
-            return sum
+            const sum = yield* Effect.succeed(a + b);
+            return sum;
           }),
-        ),
-      )
-      const result = await Effect.runPromise(r.executeCommand('vsv.add', { a: 7, b: 8 }))
-      expect(result).toBe(15)
-    })
+        );
+        const result = yield* r.executeCommand('vsv.add', { a: 7, b: 8 });
+        expect(result).toBe(15);
+      }),
+    );
 
-    test('handler failure surfaces as CommandExecutionError on executeCommand', async () => {
-      const r = createRuntime(testManifest)
-      Effect.runSync(r.defineCommand('vsv.fail', () => Effect.fail(new Error('boom'))))
-      const exit = await Effect.runPromiseExit(r.executeCommand('vsv.fail', undefined))
-      expect(Exit.isFailure(exit)).toBe(true)
-      if (Exit.isFailure(exit)) {
-        const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
-        expect(err).toBeInstanceOf(CommandExecutionError)
-        expect((err as CommandExecutionError).id).toBe('vsv.fail')
-      }
-    })
+    testRuntime(
+      'handler failure surfaces as CommandExecutionError on executeCommand',
+      Effect.gen(function* () {
+        const r = runtime();
+        yield* r.defineCommand('vsv.fail', () =>
+          Effect.failSync(() => TestFailure.make({ message: 'boom' })),
+        );
+        const exit = yield* Effect.exit(
+          r.executeCommand('vsv.fail', undefined),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const err = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(err).toBeInstanceOf(CommandExecutionError);
+          expect(err?.id).toBe('vsv.fail');
+        }
+      }),
+    );
 
-    test('handler tagged-error identity is preserved through the bridge', async () => {
-      // The bridge thunk in defineCommand uses runPromiseExit + Cause.failureOption
-      // to project the failure into a plain throwable that preserves the original
-      // Data.TaggedError instance. This pins that contract: a consumer matching
-      // on `CommandExecutionError.cause._tag` should see the handler's original
-      // tag, not Effect's `FiberFailure` wrapper.
-      class HandlerSpecificError extends Data.TaggedError('HandlerSpecificError')<{
-        readonly detail: string
-      }> {}
-      const r = createRuntime(testManifest)
-      Effect.runSync(
-        r.defineCommand('vsv.fail', () =>
-          Effect.fail(new HandlerSpecificError({ detail: 'precise' })),
-        ),
-      )
-      const exit = await Effect.runPromiseExit(r.executeCommand('vsv.fail', undefined))
-      expect(Exit.isFailure(exit)).toBe(true)
-      if (Exit.isFailure(exit) && exit.cause._tag === 'Fail') {
-        const outer = exit.cause.error
-        expect(outer).toBeInstanceOf(CommandExecutionError)
-        const inner = outer.cause
-        expect(inner).toBeInstanceOf(HandlerSpecificError)
-        // _tag identity survives the round-trip; consumers can `Match.tag` on it.
-        expect((inner as HandlerSpecificError)._tag).toBe('HandlerSpecificError')
-        expect((inner as HandlerSpecificError).detail).toBe('precise')
-      }
-    })
-  })
+    testRuntime(
+      'handler tagged-error identity is preserved through the bridge',
+      Effect.gen(function* () {
+        // The bridge thunk in defineCommand uses runPromiseExit + Cause.failureOption
+        // to project the failure into a plain throwable that preserves the original
+        // Data.TaggedError instance. This pins that contract: a consumer matching
+        // on `CommandExecutionError.cause._tag` should see the handler's original
+        // tag, not Effect's `FiberFailure` wrapper.
+        class HandlerSpecificError extends Schema.TaggedError<
+          HandlerSpecificError,
+          {}
+        >()('HandlerSpecificError', { detail: Schema.String }) {}
+        const r = runtime();
+        yield* r.defineCommand('vsv.fail', () =>
+          Effect.fail(HandlerSpecificError.make({ detail: 'precise' })),
+        );
+        const exit = yield* Effect.exit(
+          r.executeCommand('vsv.fail', undefined),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const outer = Option.getOrUndefined(
+            Cause.findErrorOption(exit.cause),
+          );
+          expect(outer).toBeInstanceOf(CommandExecutionError);
+          const inner = outer?.cause;
+          expect(inner).toBeInstanceOf(HandlerSpecificError);
+          // _tag identity survives the round-trip; consumers can `Match.tag` on it.
+          expect(
+            Schema.is(HandlerSpecificError)(inner) ? inner._tag : undefined,
+          ).toBe('HandlerSpecificError');
+          expect(
+            Schema.is(HandlerSpecificError)(inner) ? inner.detail : undefined,
+          ).toBe('precise');
+        }
+      }),
+    );
+  });
 
   describe('executeExternalCommand', () => {
-    test('nullary (void args) invokes vscode command with id only', async () => {
-      const r = createRuntime(testManifest)
-      const vs = await import('vscode')
-      let calledWith: unknown[] = ['NOT-CALLED']
-      vs.commands.registerCommand('moveFileToTrash', (...a: unknown[]) => {
-        calledWith = a
-        return undefined
-      })
-      await Effect.runPromise(r.executeExternalCommand('moveFileToTrash'))
-      expect(calledWith).toEqual([])
-    })
+    testRuntime(
+      'nullary (void args) invokes vscode command with id only',
+      Effect.gen(function* () {
+        const r = runtime();
+        let calledWith: unknown[] = ['NOT-CALLED'];
+        vs.commands.registerCommand('moveFileToTrash', (...a: unknown[]) => {
+          calledWith = a;
+          return undefined;
+        });
+        yield* r.executeExternalCommand('moveFileToTrash');
+        expect(calledWith).toEqual([]);
+      }),
+    );
 
-    test('tuple args spread into positional vscode.commands.executeCommand args', async () => {
-      const r = createRuntime(testManifest)
-      const vs = await import('vscode')
-      let observed: unknown[] = ['NOT-CALLED']
-      vs.commands.registerCommand('list.expand', (...a: unknown[]) => {
-        observed = a
-      })
-      await Effect.runPromise(r.executeExternalCommand('list.expand', 'file:///x.ts'))
-      expect(observed).toEqual(['file:///x.ts'])
-    })
+    testRuntime(
+      'tuple args spread into positional vscode.commands.executeCommand args',
+      Effect.gen(function* () {
+        const r = runtime();
+        let observed: unknown[] = ['NOT-CALLED'];
+        vs.commands.registerCommand('list.expand', (...a: unknown[]) => {
+          observed = a;
+        });
+        yield* r.executeExternalCommand('list.expand', 'file:///x.ts');
+        expect(observed).toEqual(['file:///x.ts']);
+      }),
+    );
 
-    test('multi-arg tuple flows through positionally', async () => {
-      const r = createRuntime(testManifest)
-      const vs = await import('vscode')
-      let observed: unknown[] = []
-      vs.commands.registerCommand('vscode.executeDocumentRenameProvider', (...a: unknown[]) => {
-        observed = a
-        return { applied: true }
-      })
-      const result = await Effect.runPromise(
-        r.executeExternalCommand(
+    testRuntime(
+      'multi-arg tuple flows through positionally',
+      Effect.gen(function* () {
+        const r = runtime();
+        let observed: unknown[] = [];
+        vs.commands.registerCommand(
+          'vscode.executeDocumentRenameProvider',
+          (...a: unknown[]) => {
+            observed = a;
+            return { applied: true };
+          },
+        );
+        const result = yield* r.executeExternalCommand(
           'vscode.executeDocumentRenameProvider',
           'file:///x.ts',
           { line: 0, character: 5 },
           'newName',
-        ),
-      )
-      expect(observed).toEqual(['file:///x.ts', { line: 0, character: 5 }, 'newName'])
-      expect(result.applied).toBe(true)
-    })
+        );
+        expect(observed).toEqual([
+          'file:///x.ts',
+          { line: 0, character: 5 },
+          'newName',
+        ]);
+        expect(result.applied).toBe(true);
+      }),
+    );
 
-    test('records the invocation in executedCommands', async () => {
-      const r = createRuntime(testManifest)
-      await Effect.runPromise(r.executeExternalCommand('moveFileToTrash'))
-      expect(vscode).toHaveExecutedCommand('moveFileToTrash')
-    })
+    testRuntime(
+      'records the invocation in executedCommands',
+      Effect.gen(function* () {
+        const r = runtime();
+        yield* r.executeExternalCommand('moveFileToTrash');
+        expect(vscode).toHaveExecutedCommand('moveFileToTrash');
+      }),
+    );
 
-    test('command rejection surfaces as CommandExecutionError', async () => {
-      const r = createRuntime(testManifest)
-      const vs = await import('vscode')
-      vs.commands.registerCommand('list.expand', () => {
-        throw new Error('rejected')
-      })
-      const exit = await Effect.runPromiseExit(
-        r.executeExternalCommand('list.expand', 'file:///x.ts'),
-      )
-      expect(Exit.isFailure(exit)).toBe(true)
-      if (Exit.isFailure(exit)) {
-        const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
-        expect(err).toBeInstanceOf(CommandExecutionError)
-        expect((err as CommandExecutionError).id).toBe('list.expand')
-      }
-    })
-  })
+    testRuntime(
+      'command rejection surfaces as CommandExecutionError',
+      Effect.gen(function* () {
+        const r = runtime();
+        vs.commands.registerCommand('list.expand', rejectHostCall);
+        const exit = yield* Effect.exit(
+          r.executeExternalCommand('list.expand', 'file:///x.ts'),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const err = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(err).toBeInstanceOf(CommandExecutionError);
+          expect(err?.id).toBe('list.expand');
+        }
+      }),
+    );
+  });
 
   describe('executeCommandRaw', () => {
-    test('forwards id + args through to vscode.commands.executeCommand', async () => {
-      const r = createRuntime(testManifest)
-      const vs = await import('vscode')
-      let observed: unknown[] = []
-      vs.commands.registerCommand('any.id', (...a: unknown[]) => {
-        observed = a
-        return 42
-      })
-      const result = await Effect.runPromise(r.executeCommandRaw('any.id', 'a', 1))
-      expect(observed).toEqual(['a', 1])
-      expect(result).toBe(42)
-    })
+    testRuntime(
+      'forwards id + args through to vscode.commands.executeCommand',
+      Effect.gen(function* () {
+        const r = runtime();
+        let observed: unknown[] = [];
+        vs.commands.registerCommand('any.id', (...a: unknown[]) => {
+          observed = a;
+          return 42;
+        });
+        const result = yield* r.executeCommandRaw('any.id', 'a', 1);
+        expect(observed).toEqual(['a', 1]);
+        expect(result).toBe(42);
+      }),
+    );
 
-    test('rejection surfaces as CommandExecutionError', async () => {
-      const r = createRuntime(testManifest)
-      const vs = await import('vscode')
-      vs.commands.registerCommand('any.id', () => {
-        throw new Error('nope')
-      })
-      const exit = await Effect.runPromiseExit(r.executeCommandRaw('any.id'))
-      expect(Exit.isFailure(exit)).toBe(true)
-      if (Exit.isFailure(exit)) {
-        const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
-        expect(err).toBeInstanceOf(CommandExecutionError)
-      }
-    })
-  })
+    testRuntime(
+      'rejection surfaces as CommandExecutionError',
+      Effect.gen(function* () {
+        const r = runtime();
+        vs.commands.registerCommand('any.id', rejectHostCall);
+        const exit = yield* Effect.exit(r.executeCommandRaw('any.id'));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const err = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(err).toBeInstanceOf(CommandExecutionError);
+        }
+      }),
+    );
+  });
 
   describe('defineForeignConfig', () => {
     test('reads the merged value of a foreign setting', () => {
-      vscode.state.setConfigurationDetail('editor.codeLens', { globalValue: true })
-      const r = createRuntime(testManifest)
-      const handle = Effect.runSync(r.defineForeignConfig('editor.codeLens'))
-      expect(Effect.runSync(handle.get())).toBe(true)
-    })
+      vscode.state.setConfigurationDetail('editor.codeLens', {
+        globalValue: true,
+      });
+      const r = runtime();
+      const handle = Effect.runSync(r.defineForeignConfig('editor.codeLens'));
+      expect(Effect.runSync(handle.get)).toBe(true);
+    });
 
-    test('update writes to the chosen target without re-contributing the key', async () => {
-      const r = createRuntime(testManifest)
-      const handle = Effect.runSync(r.defineForeignConfig('editor.codeLens'))
-      await Effect.runPromise(handle.update(true, ConfigurationTarget.Global))
-      expect(Effect.runSync(handle.inspect())?.globalValue).toBe(true)
-    })
+    testRuntime(
+      'update writes to the chosen target without re-contributing the key',
+      Effect.gen(function* () {
+        const r = runtime();
+        const handle = yield* r.defineForeignConfig('editor.codeLens');
+        yield* handle.update(true, ConfigurationTarget.Global);
+        expect((yield* handle.inspect)?.globalValue).toBe(true);
+      }),
+    );
 
-    test('inspect returns per-target snapshot for snapshot/restore patterns', async () => {
-      vscode.state.setConfigurationDetail('explorer.confirmDelete', { globalValue: true })
-      const r = createRuntime(testManifest)
-      const handle = Effect.runSync(r.defineForeignConfig('explorer.confirmDelete'))
-      const original = Effect.runSync(handle.inspect())?.globalValue
-      expect(original).toBe(true)
-      await Effect.runPromise(handle.update(false, ConfigurationTarget.Global))
-      expect(Effect.runSync(handle.inspect())?.globalValue).toBe(false)
-      await Effect.runPromise(handle.update(original ?? true, ConfigurationTarget.Global))
-      expect(Effect.runSync(handle.inspect())?.globalValue).toBe(true)
-    })
+    testRuntime(
+      'inspect returns per-target snapshot for snapshot/restore patterns',
+      Effect.gen(function* () {
+        vscode.state.setConfigurationDetail('explorer.confirmDelete', {
+          globalValue: true,
+        });
+        const r = runtime();
+        const handle = yield* r.defineForeignConfig('explorer.confirmDelete');
+        const original = (yield* handle.inspect)?.globalValue;
+        expect(original).toBe(true);
+        yield* handle.update(false, ConfigurationTarget.Global);
+        expect((yield* handle.inspect)?.globalValue).toBe(false);
+        yield* handle.update(original ?? true, ConfigurationTarget.Global);
+        expect((yield* handle.inspect)?.globalValue).toBe(true);
+      }),
+    );
 
     test('getWithDefault falls back when unset', () => {
-      const r = createRuntime(testManifest)
-      const handle = Effect.runSync(r.defineForeignConfig('problems.visibility'))
-      expect(Effect.runSync(handle.getWithDefault(false))).toBe(false)
-    })
-  })
+      const r = runtime();
+      const handle = Effect.runSync(
+        r.defineForeignConfig('problems.visibility'),
+      );
+      expect(Effect.runSync(handle.getWithDefault(false))).toBe(false);
+    });
+  });
 
   describe('defineConfig.inspect', () => {
     test('returns undefined for unset keys', () => {
-      const r = createRuntime(testManifest)
-      const handle = Effect.runSync(r.defineConfig('enabled'))
-      expect(Effect.runSync(handle.inspect())).toBeUndefined()
-    })
+      const r = runtime();
+      const handle = Effect.runSync(r.defineConfig('enabled'));
+      expect(Effect.runSync(handle.inspect)).toBeUndefined();
+    });
 
-    test('reflects per-target writes from update', async () => {
-      const r = createRuntime(testManifest)
-      const handle = Effect.runSync(r.defineConfig('enabled'))
-      await Effect.runPromise(handle.update(true, ConfigurationTarget.Global))
-      const ins = Effect.runSync(handle.inspect())
-      expect(ins?.globalValue).toBe(true)
-      expect(ins?.workspaceValue).toBeUndefined()
-    })
+    testRuntime(
+      'reflects per-target writes from update',
+      Effect.gen(function* () {
+        const r = runtime();
+        const handle = yield* r.defineConfig('enabled');
+        yield* handle.update(true, ConfigurationTarget.Global);
+        const ins = yield* handle.inspect;
+        expect(ins?.globalValue).toBe(true);
+        expect(ins?.workspaceValue).toBeUndefined();
+      }),
+    );
 
-    test('update failure surfaces as ConfigUpdateError', async () => {
-      const r = createRuntime(testManifest)
-      const handle = Effect.runSync(r.defineConfig('enabled'))
-      // Spy: replace the mock's update to throw, exercising the catch path.
-      const vs = (await import('vscode')) as unknown as {
-        workspace: {
-          getConfiguration: typeof import('../../runtime-test/vscode-mock.ts').workspace.getConfiguration
-        }
-      }
-      const original = vs.workspace.getConfiguration
-      vs.workspace.getConfiguration = (section?: string) => {
-        const cfg = original(section)
-        return {
-          ...cfg,
-          update: () => Promise.reject(new Error('write rejected')),
-        }
-      }
-      try {
-        const exit = await Effect.runPromiseExit(handle.update(true, ConfigurationTarget.Global))
-        expect(Exit.isFailure(exit)).toBe(true)
-        if (Exit.isFailure(exit)) {
-          const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
-          expect(err).toBeInstanceOf(ConfigUpdateError)
-          expect((err as ConfigUpdateError).key).toBe('enabled')
-        }
-      } finally {
-        vs.workspace.getConfiguration = original
-      }
-    })
-  })
+    testRuntime(
+      'update failure surfaces as ConfigUpdateError',
+      Effect.gen(function* () {
+        const r = runtimeWith((host) => ({
+          ...host,
+          workspace: {
+            ...host.workspace,
+            getConfiguration: (section) => ({
+              ...host.workspace.getConfiguration(section),
+              update: rejectHostEffect,
+            }),
+          },
+        }));
+        const handle = yield* r.defineConfig('enabled');
+        const error = yield* Effect.flip(
+          handle.update(true, ConfigurationTarget.Global),
+        );
+        expect(error).toBeInstanceOf(ConfigUpdateError);
+        expect(error.key).toBe('enabled');
+      }),
+    );
+  });
 
   describe('defineContextKey', () => {
-    test('sets initial value via setContext command', async () => {
-      const r = createRuntime(testManifest)
-      await Effect.runPromise(r.defineContextKey('vsv.isActive', false))
-      expect(vscode).toHaveContextKey('vsv.isActive', false)
-    })
+    testRuntime(
+      'sets initial value via setContext command',
+      Effect.gen(function* () {
+        const r = runtime();
+        yield* r.defineContextKey('vsv.isActive', false);
+        expect(vscode).toHaveContextKey('vsv.isActive', false);
+      }),
+    );
 
-    test('set() updates value and fires onChange listeners', async () => {
-      const r = createRuntime(testManifest)
-      const handle = await Effect.runPromise(r.defineContextKey('vsv.isActive', false))
-      const observed: boolean[] = []
-      Effect.runSync(handle.onChange((v) => observed.push(v)))
-      await Effect.runPromise(handle.set(true))
-      expect(Effect.runSync(handle.get())).toBe(true)
-      expect(observed).toEqual([true])
-      expect(vscode).toHaveContextKey('vsv.isActive', true)
-    })
+    testRuntime(
+      'set() updates value and fires onChange listeners',
+      Effect.gen(function* () {
+        const r = runtime();
+        const handle = yield* r.defineContextKey('vsv.isActive', false);
+        const observed: boolean[] = [];
+        yield* handle.onChange((v) => {
+          observed.push(v);
+        });
+        yield* handle.set(true);
+        const received = yield* handle.get;
+        expect(received).toBe(true);
+        expect(observed).toEqual([true]);
+        expect(vscode).toHaveContextKey('vsv.isActive', true);
+      }),
+    );
 
-    test('onChange disposal removes listener', async () => {
-      const r = createRuntime(testManifest)
-      const handle = await Effect.runPromise(r.defineContextKey('vsv.mode', 'off'))
-      let count = 0
-      const d = Effect.runSync(
-        handle.onChange(() => {
-          count += 1
-        }),
-      )
-      await Effect.runPromise(handle.set('on'))
-      d.dispose()
-      await Effect.runPromise(handle.set('off'))
-      expect(count).toBe(1)
-    })
+    testRuntime(
+      'onChange disposal removes listener',
+      Effect.gen(function* () {
+        const r = runtime();
+        const handle = yield* r.defineContextKey('vsv.mode', 'off');
+        let count = 0;
+        const d = yield* handle.onChange(() => {
+          count += 1;
+        });
+        yield* handle.set('on');
+        d.dispose();
+        yield* handle.set('off');
+        expect(count).toBe(1);
+      }),
+    );
 
-    test('a throwing listener does not abort sibling listeners or the Effect', async () => {
-      // The listener loop runs each callback in isolation: failures are
-      // swallowed (and logged) rather than rejecting the never-typed Effect or
-      // skipping siblings. This is critical because `set` has a `never` error
-      // channel — a throwing listener would otherwise become a defect that
-      // crashes the calling fiber.
-      const r = createRuntime(testManifest)
-      const handle = await Effect.runPromise(r.defineContextKey('vsv.isActive', false))
-      // Silence console.error for this test — the impl logs each listener
-      // throw, which would otherwise spam test output.
-      const originalError = console.error
-      // eslint-disable-next-line @typescript-eslint/no-empty-function
-      console.error = () => {}
-      try {
-        let firstCalled = false
-        let thirdCalled = false
-        Effect.runSync(
-          handle.onChange(() => {
-            firstCalled = true
-          }),
-        )
-        Effect.runSync(
-          handle.onChange(() => {
-            throw new Error('listener crash — should be isolated')
-          }),
-        )
-        Effect.runSync(
-          handle.onChange(() => {
-            thirdCalled = true
-          }),
-        )
-        // Effect must succeed even though one listener threw.
-        await Effect.runPromise(handle.set(true))
-        expect(firstCalled).toBe(true)
-        expect(thirdCalled).toBe(true)
-        // State mutation still landed.
-        expect(Effect.runSync(handle.get())).toBe(true)
-      } finally {
-        console.error = originalError
-      }
-    })
-  })
+    testRuntime(
+      'a throwing listener does not abort sibling listeners or the Effect',
+      Effect.gen(function* () {
+        const r = runtime();
+        const handle = yield* r.defineContextKey('vsv.isActive', false);
+        const seen: Array<boolean> = [];
+        yield* handle.onChange((value) => {
+          seen.push(value);
+        });
+        yield* handle.onChange(failListener);
+        yield* handle.onChange((value) => {
+          seen.push(value);
+        });
+        yield* handle.set(true).pipe(Effect.provide(Logger.layer([])));
+        expect(seen).toEqual([true, true]);
+        const received2 = yield* handle.get;
+        expect(received2).toBe(true);
+      }),
+    );
+  });
 
   describe('defineConfig', () => {
     test('reads value from workspace configuration', () => {
-      vscode.state.setConfiguration({ enabled: true })
-      const r = createRuntime(testManifest)
-      const handle = Effect.runSync(r.defineConfig('enabled'))
-      expect(Effect.runSync(handle.get())).toBe(true)
-    })
+      vscode.state.setConfiguration({ enabled: true });
+      const r = runtime();
+      const handle = Effect.runSync(r.defineConfig('enabled'));
+      expect(Effect.runSync(handle.get)).toBe(true);
+    });
 
-    test('update writes value into configuration', async () => {
-      const r = createRuntime(testManifest)
-      const handle = Effect.runSync(r.defineConfig('enabled'))
-      await Effect.runPromise(handle.update(true))
-      expect(Effect.runSync(handle.get())).toBe(true)
-    })
+    testRuntime(
+      'update writes value into configuration',
+      Effect.gen(function* () {
+        const r = runtime();
+        const handle = yield* r.defineConfig('enabled');
+        yield* handle.update(true);
+        const received3 = yield* handle.get;
+        expect(received3).toBe(true);
+      }),
+    );
 
     test('getWithDefault returns defaultValue when key is missing', () => {
-      const r = createRuntime(testManifest)
-      const handle = Effect.runSync(r.defineConfig('enabled'))
-      expect(Effect.runSync(handle.getWithDefault(false))).toBe(false)
-    })
-  })
+      const r = runtime();
+      const handle = Effect.runSync(r.defineConfig('enabled'));
+      expect(Effect.runSync(handle.getWithDefault(false))).toBe(false);
+    });
+  });
 
   describe('defineState', () => {
-    test('reads, writes, deletes from globalState', async () => {
-      const r = createRuntime(testManifest)
-      const ctx = createTestExtensionContext()
-      const handle = Effect.runSync(r.defineState(ctx, 'lastRun', 'global'))
-      expect(Effect.runSync(handle.get())).toBeUndefined()
-      await Effect.runPromise(handle.set(1234))
-      expect(Effect.runSync(handle.get())).toBe(1234)
-      await Effect.runPromise(handle.delete())
-      expect(Effect.runSync(handle.get())).toBeUndefined()
-    })
+    testRuntime(
+      'reads, writes, deletes from globalState',
+      Effect.gen(function* () {
+        const r = runtime();
+        const ctx = createTestExtensionContext();
+        const handle = yield* r.defineState(ctx, 'lastRun', 'global');
+        const received4 = yield* handle.get;
+        expect(received4).toBeUndefined();
+        yield* handle.set(1234);
+        const received5 = yield* handle.get;
+        expect(received5).toBe(1234);
+        yield* handle.delete;
+        const received6 = yield* handle.get;
+        expect(received6).toBeUndefined();
+      }),
+    );
 
     test('getWithDefault returns defaultValue when key is missing', () => {
-      const r = createRuntime(testManifest)
-      const ctx = createTestExtensionContext()
-      const handle = Effect.runSync(r.defineState(ctx, 'lastRun', 'global'))
-      expect(Effect.runSync(handle.getWithDefault(0))).toBe(0)
-    })
+      const r = runtime();
+      const ctx = createTestExtensionContext();
+      const handle = Effect.runSync(r.defineState(ctx, 'lastRun', 'global'));
+      expect(Effect.runSync(handle.getWithDefault(0))).toBe(0);
+    });
 
-    test('getWithDefault returns stored value when key is set', async () => {
-      const r = createRuntime(testManifest)
-      const ctx = createTestExtensionContext()
-      const handle = Effect.runSync(r.defineState(ctx, 'lastRun', 'global'))
-      await Effect.runPromise(handle.set(7))
-      expect(Effect.runSync(handle.getWithDefault(0))).toBe(7)
-    })
+    testRuntime(
+      'getWithDefault returns stored value when key is set',
+      Effect.gen(function* () {
+        const r = runtime();
+        const ctx = createTestExtensionContext();
+        const handle = yield* r.defineState(ctx, 'lastRun', 'global');
+        yield* handle.set(7);
+        const received7 = yield* handle.getWithDefault(0);
+        expect(received7).toBe(7);
+      }),
+    );
 
-    test('set rejection surfaces as StateUpdateError', async () => {
-      const r = createRuntime(testManifest)
-      // Hand-built broken context — `update` rejects to exercise the error path.
-      const ctx = createTestExtensionContext()
-      const original = ctx.globalState.update.bind(ctx.globalState)
-      ctx.globalState.update = () => Promise.reject(new Error('memento offline'))
-      try {
-        const handle = Effect.runSync(r.defineState(ctx, 'lastRun', 'global'))
-        const exit = await Effect.runPromiseExit(handle.set(1))
-        expect(Exit.isFailure(exit)).toBe(true)
-        if (Exit.isFailure(exit)) {
-          const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
-          expect(err).toBeInstanceOf(StateUpdateError)
-          expect((err as StateUpdateError).key).toBe('lastRun')
-          expect((err as StateUpdateError).operation).toBe('set')
-        }
-      } finally {
-        ctx.globalState.update = original
-      }
-    })
-  })
+    testRuntime(
+      'set rejection surfaces as StateUpdateError',
+      Effect.gen(function* () {
+        const context = createTestExtensionContext();
+        const ctx = {
+          ...context,
+          globalState: { ...context.globalState, update: rejectHostCall },
+        };
+        const handle = yield* runtime().defineState(ctx, 'lastRun', 'global');
+        const error = yield* Effect.flip(handle.set(1));
+        expect(error).toBeInstanceOf(StateUpdateError);
+        expect(error.key).toBe('lastRun');
+        expect(error.operation).toBe('set');
+      }),
+    );
+  });
 
   describe('defineEvent', () => {
     test('fire() notifies subscribers', () => {
-      const r = createRuntime(testManifest)
-      const ev = Effect.runSync(r.defineEvent('pulse'))
+      const r = runtime();
+      const ev = Effect.runSync(r.defineEvent('pulse'));
       // Events aren't manifest-driven yet — payload is `unknown` until an
       // `EventDecl` lands. Pub/sub mechanics are still covered.
-      const received: unknown[] = []
-      const d = Effect.runSync(ev.event((v) => received.push(v)))
-      Effect.runSync(ev.fire(1))
-      Effect.runSync(ev.fire(2))
-      d.dispose()
-      Effect.runSync(ev.fire(3))
-      expect(received).toEqual([1, 2])
-    })
-  })
+      const received: unknown[] = [];
+      const d = Effect.runSync(
+        ev.event((v) => {
+          received.push(v);
+        }),
+      );
+      Effect.runSync(ev.fire(1));
+      Effect.runSync(ev.fire(2));
+      d.dispose();
+      Effect.runSync(ev.fire(3));
+      expect(received).toEqual([1, 2]);
+    });
+  });
 
   describe('quickPick', () => {
-    test('returns value of the matched label', async () => {
-      const r = createRuntime(testManifest)
-      vscode.state.setNextQuickPickResult({ label: 'One' })
-      const picked = await Effect.runPromise(
-        r.quickPick([
+    testRuntime(
+      'returns value of the matched label',
+      Effect.gen(function* () {
+        const r = runtime();
+        vscode.state.setNextQuickPickResult({ label: 'One' });
+        const picked = yield* r.quickPick([
           { label: 'One', value: 1 },
           { label: 'Two', value: 2 },
-        ]),
-      )
-      expect(picked).toBe(1)
-    })
+        ]);
+        expect(picked).toBe(1);
+      }),
+    );
 
-    test('returns undefined when nothing is picked', async () => {
-      const r = createRuntime(testManifest)
-      vscode.state.setNextQuickPickResult(undefined)
-      const picked = await Effect.runPromise(r.quickPick([{ label: 'x', value: 1 }]))
-      expect(picked).toBeUndefined()
-    })
-  })
+    testRuntime(
+      'returns undefined when nothing is picked',
+      Effect.gen(function* () {
+        const r = runtime();
+        vscode.state.setNextQuickPickResult(undefined);
+        const picked = yield* r.quickPick([{ label: 'x', value: 1 }]);
+        expect(picked).toBeUndefined();
+      }),
+    );
+  });
 
   describe('notify', () => {
-    test('info records a message at the info level', async () => {
-      const r = createRuntime(testManifest)
-      await Effect.runPromise(r.notify.info('hello'))
-      const msgs = vscode.state.getShownMessages()
-      expect(msgs).toEqual([{ level: 'info', message: 'hello', actions: [] }])
-    })
+    testRuntime(
+      'info records a message at the info level',
+      Effect.gen(function* () {
+        const r = runtime();
+        yield* r.notify.info('hello');
+        const msgs = vscode.state.getShownMessages();
+        expect(msgs).toEqual([
+          { level: 'info', message: 'hello', actions: [] },
+        ]);
+      }),
+    );
 
-    test('warn records at the warn level', async () => {
-      const r = createRuntime(testManifest)
-      await Effect.runPromise(r.notify.warn('careful'))
-      expect(vscode.state.getShownMessages()).toEqual([
-        { level: 'warn', message: 'careful', actions: [] },
-      ])
-    })
+    testRuntime(
+      'warn records at the warn level',
+      Effect.gen(function* () {
+        const r = runtime();
+        yield* r.notify.warn('careful');
+        expect(vscode.state.getShownMessages()).toEqual([
+          { level: 'warn', message: 'careful', actions: [] },
+        ]);
+      }),
+    );
 
-    test('error records at the error level', async () => {
-      const r = createRuntime(testManifest)
-      await Effect.runPromise(r.notify.error('boom'))
-      expect(vscode.state.getShownMessages()).toEqual([
-        { level: 'error', message: 'boom', actions: [] },
-      ])
-    })
+    testRuntime(
+      'error records at the error level',
+      Effect.gen(function* () {
+        const r = runtime();
+        yield* r.notify.error('boom');
+        expect(vscode.state.getShownMessages()).toEqual([
+          { level: 'error', message: 'boom', actions: [] },
+        ]);
+      }),
+    );
 
-    test('action buttons forward through and return the user-clicked label', async () => {
-      const r = createRuntime(testManifest)
-      vscode.state.setNextMessageResult('Retry')
-      const picked = await Effect.runPromise(r.notify.error('failed', 'Retry', 'Cancel'))
-      expect(picked).toBe('Retry')
-      expect(vscode.state.getShownMessages()).toEqual([
-        { level: 'error', message: 'failed', actions: ['Retry', 'Cancel'] },
-      ])
-    })
+    testRuntime(
+      'action buttons forward through and return the user-clicked label',
+      Effect.gen(function* () {
+        const r = runtime();
+        vscode.state.setNextMessageResult('Retry');
+        const picked = yield* r.notify.error('failed', 'Retry', 'Cancel');
+        expect(picked).toBe('Retry');
+        expect(vscode.state.getShownMessages()).toEqual([
+          { level: 'error', message: 'failed', actions: ['Retry', 'Cancel'] },
+        ]);
+      }),
+    );
 
-    test('no-action notifications always yield undefined regardless of seeded result', async () => {
-      const r = createRuntime(testManifest)
-      vscode.state.setNextMessageResult('IGNORED')
-      const picked = await Effect.runPromise(r.notify.info('plain'))
-      expect(picked).toBeUndefined()
-    })
+    testRuntime(
+      'no-action notifications always yield undefined regardless of seeded result',
+      Effect.gen(function* () {
+        const r = runtime();
+        vscode.state.setNextMessageResult('IGNORED');
+        const picked = yield* r.notify.info('plain');
+        expect(picked).toBeUndefined();
+      }),
+    );
 
-    test('prompt forwards options and returns the seeded input', async () => {
-      const r = createRuntime(testManifest)
-      vscode.state.setNextInputBoxResult('typed-value')
-      const result = await Effect.runPromise(
-        r.notify.prompt({
+    testRuntime(
+      'prompt forwards options and returns the seeded input',
+      Effect.gen(function* () {
+        const r = runtime();
+        vscode.state.setNextInputBoxResult('typed-value');
+        const result = yield* r.notify.prompt({
           prompt: 'enter something',
           value: 'pre-filled',
           valueSelection: [0, 11],
-        }),
-      )
-      expect(result).toBe('typed-value')
-      const recorded = vscode.state.getShownInputBoxes()
-      expect(recorded).toHaveLength(1)
-      const opts = recorded[0]?.options as {
-        prompt: string
-        value: string
-        valueSelection: [number, number]
-      }
-      expect(opts.prompt).toBe('enter something')
-      expect(opts.value).toBe('pre-filled')
-      expect(opts.valueSelection).toEqual([0, 11])
-    })
+        });
+        expect(result).toBe('typed-value');
+        const recorded = vscode.state.getShownInputBoxes();
+        expect(recorded).toHaveLength(1);
+        expect(recorded[0]?.options).toMatchObject({
+          prompt: 'enter something',
+          value: 'pre-filled',
+          valueSelection: [0, 11],
+        });
+      }),
+    );
 
-    test('prompt returns undefined when dismissed', async () => {
-      const r = createRuntime(testManifest)
-      vscode.state.setNextInputBoxResult(undefined)
-      const result = await Effect.runPromise(r.notify.prompt({ prompt: 'enter' }))
-      expect(result).toBeUndefined()
-    })
-  })
+    testRuntime(
+      'prompt returns undefined when dismissed',
+      Effect.gen(function* () {
+        const r = runtime();
+        vscode.state.setNextInputBoxResult(undefined);
+        const result = yield* r.notify.prompt({ prompt: 'enter' });
+        expect(result).toBeUndefined();
+      }),
+    );
+  });
 
   describe('statusBar', () => {
     test('message records a status bar message with the default timeout', () => {
-      const r = createRuntime(testManifest)
-      Effect.runSync(r.statusBar.message('hello'))
-      const msgs = vscode.state.getStatusBarMessages()
-      expect(msgs).toEqual([{ message: 'hello', hideAfterTimeout: 1500 }])
-    })
+      const r = runtime();
+      Effect.runSync(r.statusBar.message('hello'));
+      const msgs = vscode.state.getStatusBarMessages();
+      expect(msgs).toEqual([{ message: 'hello', hideAfterTimeout: 1500 }]);
+    });
 
     test('message respects an explicit timeout', () => {
-      const r = createRuntime(testManifest)
-      Effect.runSync(r.statusBar.message('hello', 5000))
+      const r = runtime();
+      Effect.runSync(r.statusBar.message('hello', 5000));
       expect(vscode.state.getStatusBarMessages()).toEqual([
         { message: 'hello', hideAfterTimeout: 5000 },
-      ])
-    })
-  })
+      ]);
+    });
+  });
 
   describe('clipboard', () => {
-    test('writeText then readText round-trips the value', async () => {
-      const r = createRuntime(testManifest)
-      await Effect.runPromise(r.clipboard.writeText('hello'))
-      expect(await Effect.runPromise(r.clipboard.readText())).toBe('hello')
-    })
+    testRuntime(
+      'writeText then readText round-trips the value',
+      Effect.gen(function* () {
+        const r = runtime();
+        yield* r.clipboard.writeText('hello');
+        const received8 = yield* r.clipboard.readText;
+        expect(received8).toBe('hello');
+      }),
+    );
 
-    test('readText returns the seeded clipboard value', async () => {
-      const r = createRuntime(testManifest)
-      vscode.state.setClipboard('seeded')
-      expect(await Effect.runPromise(r.clipboard.readText())).toBe('seeded')
-    })
+    testRuntime(
+      'readText returns the seeded clipboard value',
+      Effect.gen(function* () {
+        const r = runtime();
+        vscode.state.setClipboard('seeded');
+        const received9 = yield* r.clipboard.readText;
+        expect(received9).toBe('seeded');
+      }),
+    );
 
-    test('writeText updates observable mock state', async () => {
-      const r = createRuntime(testManifest)
-      await Effect.runPromise(r.clipboard.writeText('written'))
-      expect(vscode.state.getClipboard()).toBe('written')
-    })
+    testRuntime(
+      'writeText updates observable mock state',
+      Effect.gen(function* () {
+        const r = runtime();
+        yield* r.clipboard.writeText('written');
+        expect(vscode.state.getClipboard()).toBe('written');
+      }),
+    );
 
-    test('readText rejection surfaces as ClipboardError', async () => {
-      const r = createRuntime(testManifest)
-      const vs = (await import('vscode')) as unknown as {
-        env: {
-          clipboard: { readText: () => Promise<string>; writeText: (t: string) => Promise<void> }
-        }
-      }
-      const original = vs.env.clipboard.readText
-      vs.env.clipboard.readText = () => Promise.reject(new Error('IPC down'))
-      try {
-        const exit = await Effect.runPromiseExit(r.clipboard.readText())
-        expect(Exit.isFailure(exit)).toBe(true)
-        if (Exit.isFailure(exit)) {
-          const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
-          expect(err).toBeInstanceOf(ClipboardError)
-          expect((err as ClipboardError).operation).toBe('readText')
-        }
-      } finally {
-        vs.env.clipboard.readText = original
-      }
-    })
-  })
+    testRuntime(
+      'readText rejection surfaces as ClipboardError',
+      Effect.gen(function* () {
+        const r = runtimeWith((host) => ({
+          ...host,
+          env: {
+            clipboard: { ...host.env.clipboard, readText: rejectHostEffect },
+          },
+        }));
+        const error = yield* Effect.flip(r.clipboard.readText);
+        expect(error).toBeInstanceOf(ClipboardError);
+        expect(error.operation).toBe('readText');
+      }),
+    );
+  });
 
   describe('workspace.folders', () => {
     test('returns undefined when no folder is open', () => {
-      const r = createRuntime(testManifest)
-      expect(Effect.runSync(r.workspace.folders())).toBeUndefined()
-    })
+      const r = runtime();
+      expect(Effect.runSync(r.workspace.folders)).toBeUndefined();
+    });
 
     test('returns the seeded folders with computed indexes', () => {
-      const r = createRuntime(testManifest)
-      const fakeUri = {
-        fsPath: '/repo/a',
-        toString: () => 'file:///repo/a',
-      } as unknown as import('vscode').Uri
-      vscode.state.setWorkspaceFolders([{ uri: fakeUri }])
-      const folders = Effect.runSync(r.workspace.folders())
-      expect(folders).toHaveLength(1)
-      expect(folders?.[0]?.index).toBe(0)
-      expect(folders?.[0]?.name).toBe('a')
-    })
-  })
+      const r = runtime();
+      const fakeUri = vs.Uri.file('/repo/a');
+      vscode.state.setWorkspaceFolders([{ uri: fakeUri }]);
+      const folders = Effect.runSync(r.workspace.folders);
+      expect(folders).toHaveLength(1);
+      expect(folders?.[0]?.index).toBe(0);
+      expect(folders?.[0]?.name).toBe('a');
+    });
+  });
 
   describe('workspace.openTextDocument', () => {
-    test('opens a seeded document', async () => {
-      const r = createRuntime(testManifest)
-      const vs = await import('vscode')
-      const uri = vs.Uri.parse('file:///foo.ts')
-      vscode.state.openDocument(uri, 'console.log("hi")')
-      const doc = await Effect.runPromise(r.workspace.openTextDocument(uri))
-      expect(doc.getText()).toBe('console.log("hi")')
-    })
+    testRuntime(
+      'opens a seeded document',
+      Effect.gen(function* () {
+        const r = runtime();
+        const uri = vs.Uri.parse('file:///foo.ts');
+        vscode.state.openDocument(uri, 'console.log("hi")');
+        const doc = yield* r.workspace.openTextDocument(uri);
+        expect(doc.getText()).toBe('console.log("hi")');
+      }),
+    );
 
-    test('opens by string path', async () => {
-      const r = createRuntime(testManifest)
-      vscode.state.openDocument('/x/y.ts', 'export const x = 1')
-      const doc = await Effect.runPromise(r.workspace.openTextDocument('/x/y.ts'))
-      expect(doc.getText()).toBe('export const x = 1')
-    })
+    testRuntime(
+      'opens by string path',
+      Effect.gen(function* () {
+        const r = runtime();
+        vscode.state.openDocument('/x/y.ts', 'export const x = 1');
+        const doc = yield* r.workspace.openTextDocument('/x/y.ts');
+        expect(doc.getText()).toBe('export const x = 1');
+      }),
+    );
 
-    test('rejection surfaces as DocumentOpenError', async () => {
-      const r = createRuntime(testManifest)
-      const vs = (await import('vscode')) as unknown as {
-        workspace: { openTextDocument: (t: unknown) => Promise<unknown> }
-      }
-      const original = vs.workspace.openTextDocument
-      vs.workspace.openTextDocument = () => Promise.reject(new Error('no provider'))
-      try {
-        const exit = await Effect.runPromiseExit(r.workspace.openTextDocument('untitled:nope.ts'))
-        expect(Exit.isFailure(exit)).toBe(true)
-        if (Exit.isFailure(exit)) {
-          const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
-          expect(err).toBeInstanceOf(DocumentOpenError)
-        }
-      } finally {
-        vs.workspace.openTextDocument = original
-      }
-    })
-  })
+    testRuntime(
+      'rejection surfaces as DocumentOpenError',
+      Effect.gen(function* () {
+        const r = runtimeWith((host) => ({
+          ...host,
+          workspace: { ...host.workspace, openTextDocument: rejectHostEffect },
+        }));
+        const error = yield* Effect.flip(
+          r.workspace.openTextDocument('untitled:nope.ts'),
+        );
+        expect(error).toBeInstanceOf(DocumentOpenError);
+      }),
+    );
+  });
 
   describe('workspace.onDidChangeTextDocument', () => {
     test('subscribes to text document change events', () => {
-      const r = createRuntime(testManifest)
-      const doc = vscode.state.openDocument('file:///changed.ts', 'before')
-      const seen: string[] = []
+      const r = runtime();
+      const doc = vscode.state.openDocument('file:///changed.ts', 'before');
+      const seen: string[] = [];
       const disposable = Effect.runSync(
         r.workspace.onDidChangeTextDocument((event) => {
-          seen.push(event.contentChanges.map((change) => change.text).join(''))
+          seen.push(
+            Array.join(
+              Array.map(event.contentChanges, (change) => change.text),
+              '',
+            ),
+          );
         }),
-      )
+      );
 
-      vscode.state.fireTextDocumentChange(doc, [{ text: '/done' }])
-      disposable.dispose()
-      vscode.state.fireTextDocumentChange(doc, [{ text: 'ignored' }])
+      vscode.state.fireTextDocumentChange(doc, [{ text: '/done' }]);
+      disposable.dispose();
+      vscode.state.fireTextDocumentChange(doc, [{ text: 'ignored' }]);
 
-      expect(seen).toEqual(['/done'])
-    })
-  })
+      expect(seen).toEqual(['/done']);
+    });
+  });
 
   describe('workspace.saveTextDocument', () => {
-    test('saves a document and yields true', async () => {
-      const r = createRuntime(testManifest)
-      const doc = vscode.state.openDocument('file:///save-me.ts', 'content')
+    testRuntime(
+      'saves a document and yields true',
+      Effect.gen(function* () {
+        const r = runtime();
+        const doc = vscode.state.openDocument('file:///save-me.ts', 'content');
 
-      const result = await Effect.runPromise(
-        r.workspace.saveTextDocument(doc as unknown as import('vscode').TextDocument),
-      )
-      expect(result).toBe(true)
-    })
+        const result = yield* r.workspace.saveTextDocument(doc);
+        expect(result).toBe(true);
+      }),
+    );
 
-    test('rejection surfaces as DocumentSaveError', async () => {
-      const r = createRuntime(testManifest)
-      const doc = vscode.state.openDocument(
-        'file:///save-fails.ts',
-        'content',
-      ) as unknown as import('vscode').TextDocument & { save: () => Promise<boolean> }
-      const original = doc.save
-      doc.save = () => Promise.reject(new Error('readonly'))
-      try {
-        const exit = await Effect.runPromiseExit(r.workspace.saveTextDocument(doc))
-        expect(Exit.isFailure(exit)).toBe(true)
-        if (Exit.isFailure(exit)) {
-          const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
-          expect(err).toBeInstanceOf(DocumentSaveError)
-        }
-      } finally {
-        doc.save = original
-      }
-    })
-  })
+    testRuntime(
+      'rejection surfaces as DocumentSaveError',
+      Effect.gen(function* () {
+        const r = runtime();
+        const doc = vscode.state.openDocument('file:///locked.ts', 'immutable');
+        const error = yield* Effect.flip(
+          r.workspace.saveTextDocument({ ...doc, save: rejectHostCall }),
+        );
+        expect(error).toBeInstanceOf(DocumentSaveError);
+        expect(error.uri).toBe(doc.uri);
+      }),
+    );
+  });
 
   describe('workspace.applyEdit', () => {
-    test('applies an edit and yields true', async () => {
-      const r = createRuntime(testManifest)
-      const vs = await import('vscode')
-      const uri = vs.Uri.parse('file:///foo.ts')
-      vscode.state.openDocument(uri, 'before')
-      const edit = new vs.WorkspaceEdit()
-      edit.replace(uri, new vs.Range(0, 0, 0, 6), 'after')
-      const result = await Effect.runPromise(r.workspace.applyEdit(edit))
-      expect(result).toBe(true)
-    })
-  })
+    testRuntime(
+      'applies an edit and yields true',
+      Effect.gen(function* () {
+        const r = runtime();
+        const uri = vs.Uri.parse('file:///foo.ts');
+        vscode.state.openDocument(uri, 'before');
+        const edit = new vs.WorkspaceEdit();
+        edit.replace(uri, new vs.Range(0, 0, 0, 6), 'after');
+        const result = yield* r.workspace.applyEdit(edit);
+        expect(result).toBe(true);
+      }),
+    );
+  });
 
   describe('workspace.updateFolders', () => {
-    test('forwards args to vscode.workspace.updateWorkspaceFolders and returns true', async () => {
-      const r = createRuntime(testManifest)
-      const vs = await import('vscode')
-      const uri = vs.Uri.file('/repo/added')
-      const ok = Effect.runSync(r.workspace.updateFolders(0, 0, { uri, name: 'added' }))
-      expect(ok).toBe(true)
-      const calls = vscode.state.getUpdateFolderCalls()
-      expect(calls).toHaveLength(1)
-      expect(calls[0]?.start).toBe(0)
-      expect(calls[0]?.deleteCount).toBe(0)
-      expect(calls[0]?.adds[0]?.name).toBe('added')
-    })
+    test('forwards args to vscode.workspace.updateWorkspaceFolders and returns true', () => {
+      const r = runtime();
+      const uri = vs.Uri.file('/repo/added');
+      const ok = Effect.runSync(
+        r.workspace.updateFolders(0, 0, { uri, name: 'added' }),
+      );
+      expect(ok).toBe(true);
+      const calls = vscode.state.getUpdateFolderCalls();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.start).toBe(0);
+      expect(calls[0]?.deleteCount).toBe(0);
+      expect(calls[0]?.adds[0]?.name).toBe('added');
+    });
 
     test('returns false when vscode rejects the splice (e.g. invalid args)', () => {
-      const r = createRuntime(testManifest)
-      vscode.state.setNextUpdateFoldersResult(false)
-      const ok = Effect.runSync(r.workspace.updateFolders(99, 99)) // out-of-range delete
-      expect(ok).toBe(false)
-    })
-  })
+      const r = runtime();
+      vscode.state.setNextUpdateFoldersResult(false);
+      const ok = Effect.runSync(r.workspace.updateFolders(99, 99)); // out-of-range delete
+      expect(ok).toBe(false);
+    });
+  });
 
   describe('window.showOpenDialog', () => {
-    test('forwards options and yields the seeded selection', async () => {
-      const r = createRuntime(testManifest)
-      const vs = await import('vscode')
-      const selected = vs.Uri.file('/picked.ts')
-      vscode.state.setNextOpenDialogResult([selected])
-      const result = await Effect.runPromise(
-        r.window.showOpenDialog({
+    testRuntime(
+      'forwards options and yields the seeded selection',
+      Effect.gen(function* () {
+        const r = runtime();
+        const selected = vs.Uri.file('/picked.ts');
+        vscode.state.setNextOpenDialogResult([selected]);
+        const result = yield* r.window.showOpenDialog({
           canSelectFiles: true,
           canSelectMany: false,
           filters: { TypeScript: ['ts'] },
           title: 'Pick',
-        }),
-      )
-      expect(result).toEqual([selected])
-      const calls = vscode.state.getOpenDialogCalls()
-      expect(calls).toHaveLength(1)
-      expect(calls[0]?.options.canSelectFiles).toBe(true)
-      expect(calls[0]?.options.title).toBe('Pick')
-      expect(calls[0]?.options.filters).toEqual({ TypeScript: ['ts'] })
-    })
+        });
+        expect(result).toEqual([selected]);
+        const calls = vscode.state.getOpenDialogCalls();
+        expect(calls).toHaveLength(1);
+        expect(calls[0]?.options.canSelectFiles).toBe(true);
+        expect(calls[0]?.options.title).toBe('Pick');
+        expect(calls[0]?.options.filters).toEqual({ TypeScript: ['ts'] });
+      }),
+    );
 
-    test('yields undefined when the user dismisses the dialog', async () => {
-      const r = createRuntime(testManifest)
-      vscode.state.setNextOpenDialogResult(undefined)
-      const result = await Effect.runPromise(r.window.showOpenDialog())
-      expect(result).toBeUndefined()
-    })
-  })
+    testRuntime(
+      'yields undefined when the user dismisses the dialog',
+      Effect.gen(function* () {
+        const r = runtime();
+        vscode.state.setNextOpenDialogResult(undefined);
+        const result = yield* r.window.showOpenDialog();
+        expect(result).toBeUndefined();
+      }),
+    );
+  });
 
   describe('fs', () => {
-    test('readDirectory returns seeded entries', async () => {
-      const r = createRuntime(testManifest)
-      const dirUri = { fsPath: '/repo' } as unknown as import('vscode').Uri
-      vscode.state.setFsDirectory('/repo', [
-        ['src', 2 /* Directory */],
-        ['readme.md', 1 /* File */],
-      ])
-      const entries = await Effect.runPromise(r.fs.readDirectory(dirUri))
-      expect(entries).toHaveLength(2)
-      expect(entries[0]?.[0]).toBe('src')
-      expect(entries[1]?.[0]).toBe('readme.md')
-    })
+    testRuntime(
+      'readDirectory returns seeded entries',
+      Effect.gen(function* () {
+        const r = runtime();
+        const dirUri = vs.Uri.file('/repo');
+        vscode.state.setFsDirectory('/repo', [
+          ['src', 2 /* Directory */],
+          ['readme.md', 1 /* File */],
+        ]);
+        const entries = yield* r.fs.readDirectory(dirUri);
+        expect(entries).toHaveLength(2);
+        expect(entries[0]?.[0]).toBe('src');
+        expect(entries[1]?.[0]).toBe('readme.md');
+      }),
+    );
 
-    test('readDirectory on missing path fails with FileNotFoundError', async () => {
-      const r = createRuntime(testManifest)
-      const dirUri = { fsPath: '/nonexistent' } as unknown as import('vscode').Uri
-      const exit = await Effect.runPromiseExit(r.fs.readDirectory(dirUri))
-      expect(Exit.isFailure(exit)).toBe(true)
-      if (Exit.isFailure(exit)) {
-        const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
-        expect(err).toBeInstanceOf(FileNotFoundError)
-        expect((err as FileNotFoundError).operation).toBe('readDirectory')
-      }
-    })
+    testRuntime(
+      'readDirectory on missing path fails with FileNotFoundError',
+      Effect.gen(function* () {
+        const r = runtime();
+        const dirUri = vs.Uri.file('/nonexistent');
+        const exit = yield* Effect.exit(r.fs.readDirectory(dirUri));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const err = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(err).toBeInstanceOf(FileNotFoundError);
+          expect(err?.operation).toBe('readDirectory');
+        }
+      }),
+    );
 
-    test('stat returns the seeded stat', async () => {
-      const r = createRuntime(testManifest)
-      const fileUri = { fsPath: '/repo/a' } as unknown as import('vscode').Uri
-      vscode.state.setFsStat('/repo/a', { type: 1, ctime: 0, mtime: 0, size: 42 })
-      const stat = await Effect.runPromise(r.fs.stat(fileUri))
-      expect(stat.size).toBe(42)
-    })
+    testRuntime(
+      'stat returns the seeded stat',
+      Effect.gen(function* () {
+        const r = runtime();
+        const fileUri = vs.Uri.file('/repo/a');
+        vscode.state.setFsStat('/repo/a', {
+          type: 1,
+          ctime: 0,
+          mtime: 0,
+          size: 42,
+        });
+        const stat = yield* r.fs.stat(fileUri);
+        expect(stat.size).toBe(42);
+      }),
+    );
 
-    test('stat on missing path fails with FileNotFoundError', async () => {
-      const r = createRuntime(testManifest)
-      const fileUri = { fsPath: '/missing' } as unknown as import('vscode').Uri
-      const exit = await Effect.runPromiseExit(r.fs.stat(fileUri))
-      expect(Exit.isFailure(exit)).toBe(true)
-      if (Exit.isFailure(exit)) {
-        const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
-        expect(err).toBeInstanceOf(FileNotFoundError)
-        expect((err as FileNotFoundError).operation).toBe('stat')
-      }
-    })
+    testRuntime(
+      'stat on missing path fails with FileNotFoundError',
+      Effect.gen(function* () {
+        const r = runtime();
+        const fileUri = vs.Uri.file('/missing');
+        const exit = yield* Effect.exit(r.fs.stat(fileUri));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const err = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(err).toBeInstanceOf(FileNotFoundError);
+          expect(err?.operation).toBe('stat');
+        }
+      }),
+    );
 
-    test('readFile returns seeded contents', async () => {
-      const r = createRuntime(testManifest)
-      const fileUri = { fsPath: '/repo/menus.json' } as unknown as import('vscode').Uri
-      const content = new TextEncoder().encode('{"version":1}')
-      vscode.state.setFsContent('/repo/menus.json', content)
-      const bytes = await Effect.runPromise(r.fs.readFile(fileUri))
-      expect(new TextDecoder().decode(bytes)).toBe('{"version":1}')
-    })
+    testRuntime(
+      'readFile returns seeded contents',
+      Effect.gen(function* () {
+        const r = runtime();
+        const fileUri = vs.Uri.file('/repo/menus.json');
+        const content = new TextEncoder().encode('{"version":1}');
+        vscode.state.setFsContent('/repo/menus.json', content);
+        const bytes = yield* r.fs.readFile(fileUri);
+        expect(new TextDecoder().decode(bytes)).toBe('{"version":1}');
+      }),
+    );
 
-    test('readFile on missing path fails with FileNotFoundError', async () => {
-      const r = createRuntime(testManifest)
-      const fileUri = { fsPath: '/nope' } as unknown as import('vscode').Uri
-      const exit = await Effect.runPromiseExit(r.fs.readFile(fileUri))
-      expect(Exit.isFailure(exit)).toBe(true)
-      if (Exit.isFailure(exit)) {
-        const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
-        expect(err).toBeInstanceOf(FileNotFoundError)
-        expect((err as FileNotFoundError).operation).toBe('readFile')
-      }
-    })
+    testRuntime(
+      'readFile on missing path fails with FileNotFoundError',
+      Effect.gen(function* () {
+        const r = runtime();
+        const fileUri = vs.Uri.file('/nope');
+        const exit = yield* Effect.exit(r.fs.readFile(fileUri));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const err = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(err).toBeInstanceOf(FileNotFoundError);
+          expect(err?.operation).toBe('readFile');
+        }
+      }),
+    );
 
-    test('writeFile records contents readable via readFile', async () => {
-      const r = createRuntime(testManifest)
-      const fileUri = { fsPath: '/repo/out.txt' } as unknown as import('vscode').Uri
-      const content = new TextEncoder().encode('hello')
-      await Effect.runPromise(r.fs.writeFile(fileUri, content))
-      const round = await Effect.runPromise(r.fs.readFile(fileUri))
-      expect(new TextDecoder().decode(round)).toBe('hello')
-    })
+    testRuntime(
+      'writeFile records contents readable via readFile',
+      Effect.gen(function* () {
+        const r = runtime();
+        const fileUri = vs.Uri.file('/repo/out.txt');
+        const content = new TextEncoder().encode('hello');
+        yield* r.fs.writeFile(fileUri, content);
+        const round = yield* r.fs.readFile(fileUri);
+        expect(new TextDecoder().decode(round)).toBe('hello');
+      }),
+    );
 
-    test('createDirectory is idempotent', async () => {
-      const r = createRuntime(testManifest)
-      const dirUri = { fsPath: '/repo/new' } as unknown as import('vscode').Uri
-      await Effect.runPromise(r.fs.createDirectory(dirUri))
-      // Second call must not throw — VSCode's createDirectory is recursive
-      // and idempotent by contract.
-      await Effect.runPromise(r.fs.createDirectory(dirUri))
-      const stat = await Effect.runPromise(r.fs.stat(dirUri))
-      expect(stat.type).toBe(2 /* Directory */)
-    })
+    testRuntime(
+      'createDirectory is idempotent',
+      Effect.gen(function* () {
+        const r = runtime();
+        const dirUri = vs.Uri.file('/repo/new');
+        yield* r.fs.createDirectory(dirUri);
+        // Second call must not throw — VSCode's createDirectory is recursive
+        // and idempotent by contract.
+        yield* r.fs.createDirectory(dirUri);
+        const stat = yield* r.fs.stat(dirUri);
+        expect(stat.type).toBe(2 /* Directory */);
+      }),
+    );
 
-    test('rename moves file content', async () => {
-      const r = createRuntime(testManifest)
-      const from = { fsPath: '/repo/comments.json.tmp' } as unknown as import('vscode').Uri
-      const to = { fsPath: '/repo/comments.json' } as unknown as import('vscode').Uri
-      const content = new TextEncoder().encode('{"schema":1}')
-      vscode.state.setFsContent(from.fsPath, content)
+    testRuntime(
+      'rename moves file content',
+      Effect.gen(function* () {
+        const r = runtime();
+        const from = vs.Uri.file('/repo/comments.json.tmp');
+        const to = vs.Uri.file('/repo/comments.json');
+        const content = new TextEncoder().encode('{"schema":1}');
+        vscode.state.setFsContent(from.fsPath, content);
 
-      await Effect.runPromise(r.fs.rename(from, to, { overwrite: true }))
+        yield* r.fs.rename(from, to, { overwrite: true });
 
-      expect(vscode.state.getFsContent(from.fsPath)).toBeUndefined()
-      expect(vscode.state.getFsContent(to.fsPath)).toEqual(content)
-    })
+        expect(vscode.state.getFsContent(from.fsPath)).toBeUndefined();
+        expect(vscode.state.getFsContent(to.fsPath)).toEqual(content);
+      }),
+    );
 
-    test('rename on missing path fails with FileNotFoundError', async () => {
-      const r = createRuntime(testManifest)
-      const from = { fsPath: '/repo/missing.tmp' } as unknown as import('vscode').Uri
-      const to = { fsPath: '/repo/comments.json' } as unknown as import('vscode').Uri
-      const exit = await Effect.runPromiseExit(r.fs.rename(from, to))
+    testRuntime(
+      'rename on missing path fails with FileNotFoundError',
+      Effect.gen(function* () {
+        const r = runtime();
+        const from = vs.Uri.file('/repo/missing.tmp');
+        const to = vs.Uri.file('/repo/comments.json');
+        const exit = yield* Effect.exit(r.fs.rename(from, to));
 
-      expect(Exit.isFailure(exit)).toBe(true)
-      if (Exit.isFailure(exit)) {
-        const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
-        expect(err).toBeInstanceOf(FileNotFoundError)
-        expect((err as FileNotFoundError).operation).toBe('rename')
-      }
-    })
-  })
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const err = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(err).toBeInstanceOf(FileNotFoundError);
+          expect(err?.operation).toBe('rename');
+        }
+      }),
+    );
+  });
 
   describe('fs.realpath', () => {
-    test('resolves symlinks using Node fs', async () => {
-      const r = createRuntime(testManifest)
-      const vs = await import('vscode')
-      const tmp = await nodeFs.promises.mkdtemp(path.join(os.tmpdir(), 'vsv-realpath-'))
-      try {
-        const target = path.join(tmp, 'real.txt')
-        const link = path.join(tmp, 'link.txt')
-        await nodeFs.promises.writeFile(target, 'hi', 'utf8')
-        await nodeFs.promises.symlink(target, link)
-        const resolved = await Effect.runPromise(r.fs.realpath(vs.Uri.file(link)))
+    testRuntime(
+      'resolves symlinks using Node fs',
+      Effect.gen(function* () {
+        const r = runtime();
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tmp = yield* fs.makeTempDirectoryScoped({
+          prefix: 'vsv-realpath-',
+        });
+        const target = path.join(tmp, 'real.txt');
+        const link = path.join(tmp, 'link.txt');
+        yield* fs.writeFileString(target, 'hi');
+        yield* fs.symlink(target, link);
+        const resolved = yield* r.fs.realpath(vs.Uri.file(link));
         // realpath returns the canonical path, which on macOS may have /private prefix.
-        const expected = await nodeFs.promises.realpath(target)
-        expect(resolved.fsPath).toBe(expected)
-      } finally {
-        await nodeFs.promises.rm(tmp, { recursive: true, force: true })
-      }
-    })
+        const expected = yield* fs.realPath(target);
+        expect(resolved.fsPath).toBe(expected);
+      }),
+    );
 
-    test('non-file scheme fails with UnsupportedSchemeError', async () => {
-      const r = createRuntime(testManifest)
-      const vs = await import('vscode')
-      const remoteUri = vs.Uri.parse('vscode-remote://remote/foo')
-      const exit = await Effect.runPromiseExit(r.fs.realpath(remoteUri))
-      expect(Exit.isFailure(exit)).toBe(true)
-      if (Exit.isFailure(exit)) {
-        const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
-        expect(err).toBeInstanceOf(UnsupportedSchemeError)
-        expect((err as UnsupportedSchemeError).operation).toBe('realpath')
-        expect((err as UnsupportedSchemeError).expectedScheme).toBe('file')
-      }
-    })
-
-    test('broken symlink fails with FileNotFoundError', async () => {
-      const r = createRuntime(testManifest)
-      const vs = await import('vscode')
-      const tmp = await nodeFs.promises.mkdtemp(path.join(os.tmpdir(), 'vsv-realpath-'))
-      try {
-        const link = path.join(tmp, 'broken.txt')
-        await nodeFs.promises.symlink(path.join(tmp, 'does-not-exist.txt'), link)
-        const exit = await Effect.runPromiseExit(r.fs.realpath(vs.Uri.file(link)))
-        expect(Exit.isFailure(exit)).toBe(true)
+    testRuntime(
+      'non-file scheme fails with UnsupportedSchemeError',
+      Effect.gen(function* () {
+        const r = runtime();
+        const remoteUri = vs.Uri.parse('vscode-remote://remote/foo');
+        const exit = yield* Effect.exit(r.fs.realpath(remoteUri));
+        expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
-          expect(err).toBeInstanceOf(FileNotFoundError)
-          expect((err as FileNotFoundError).operation).toBe('realpath')
+          const err = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(err).toBeInstanceOf(UnsupportedSchemeError);
+          expect(err?.operation).toBe('realpath');
+          expect(
+            Schema.is(UnsupportedSchemeError)(err)
+              ? err.expectedScheme
+              : undefined,
+          ).toBe('file');
         }
-      } finally {
-        await nodeFs.promises.rm(tmp, { recursive: true, force: true })
-      }
-    })
+      }),
+    );
 
-    test('non-existent path fails with FileNotFoundError', async () => {
-      const r = createRuntime(testManifest)
-      const vs = await import('vscode')
-      const exit = await Effect.runPromiseExit(
-        r.fs.realpath(vs.Uri.file('/does/not/exist/anywhere/ever')),
-      )
-      expect(Exit.isFailure(exit)).toBe(true)
-      if (Exit.isFailure(exit)) {
-        const err = exit.cause._tag === 'Fail' ? exit.cause.error : undefined
-        expect(err).toBeInstanceOf(FileNotFoundError)
-      }
-    })
-  })
+    testRuntime(
+      'broken symlink fails with FileNotFoundError',
+      Effect.gen(function* () {
+        const r = runtime();
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tmp = yield* fs.makeTempDirectoryScoped({
+          prefix: 'vsv-realpath-',
+        });
+        const link = path.join(tmp, 'broken.txt');
+        yield* fs.symlink(path.join(tmp, 'does-not-exist.txt'), link);
+        const exit = yield* Effect.exit(r.fs.realpath(vs.Uri.file(link)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const err = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(err).toBeInstanceOf(FileNotFoundError);
+          expect(err?.operation).toBe('realpath');
+        }
+      }),
+    );
+
+    testRuntime(
+      'non-existent path fails with FileNotFoundError',
+      Effect.gen(function* () {
+        const r = runtime();
+        const exit = yield* Effect.exit(
+          r.fs.realpath(vs.Uri.file('/does/not/exist/anywhere/ever')),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const err = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(err).toBeInstanceOf(FileNotFoundError);
+        }
+      }),
+    );
+  });
 
   describe('tabs.close', () => {
-    test('closes all targeted tabs and yields true', async () => {
-      const r = createRuntime(testManifest)
-      vscode.state.setTabs([
-        { label: 'a.ts', isPinned: false },
-        { label: 'b.ts', isPinned: false },
-      ])
-      const groups = Effect.runSync(r.tabs.groups())
-      const firstTab = groups[0]?.tabs[0]
-      // The mock stores `MockTab` objects which match the structural shape vscode
-      // exposes well enough for our wrapper. The cast is at the test boundary.
-      const ok = await Effect.runPromise(r.tabs.close(firstTab as unknown as import('vscode').Tab))
-      expect(ok).toBe(true)
-      const closed = vscode.state.getClosedTabs()
-      expect(closed).toHaveLength(1)
-      expect(closed[0]?.label).toBe('a.ts')
-    })
-  })
+    testRuntime(
+      'closes all targeted tabs and yields true',
+      Effect.gen(function* () {
+        const r = runtime();
+        vscode.state.setTabs([
+          { label: 'a.ts', isPinned: false },
+          { label: 'b.ts', isPinned: false },
+        ]);
+        const groups = yield* r.tabs.groups;
+        const firstTab = groups[0]?.tabs[0];
+        expect(firstTab).toBeDefined();
+        if (firstTab === undefined) return;
+        const ok = yield* r.tabs.close(firstTab);
+        expect(ok).toBe(true);
+        const closed = vscode.state.getClosedTabs();
+        expect(closed).toHaveLength(1);
+        expect(closed[0]?.label).toBe('a.ts');
+      }),
+    );
+  });
 
   describe('disposables', () => {
     test('dispose() disposes all members', () => {
-      const r = createRuntime(testManifest)
-      const flags = { a: false, b: false }
+      const r = runtime();
+      const flags = { a: false, b: false };
       const group = Effect.runSync(
-        r.disposables({ dispose: () => (flags.a = true) }, { dispose: () => (flags.b = true) }),
-      )
-      group.dispose()
-      expect(flags.a).toBe(true)
-      expect(flags.b).toBe(true)
-    })
-  })
-})
+        r.disposables(
+          {
+            dispose: () => {
+              flags.a = true;
+            },
+          },
+          {
+            dispose: () => {
+              flags.b = true;
+            },
+          },
+        ),
+      );
+      group.dispose();
+      expect(flags.a).toBe(true);
+      expect(flags.b).toBe(true);
+    });
+  });
+});

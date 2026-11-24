@@ -1,112 +1,136 @@
-import type { Manifest } from '#lib/manifest/schema'
-import { WhenClause } from '#lib/when/when'
-import { JSONSchema, Schema } from 'effect'
+import {
+  Array,
+  Effect,
+  FileSystem,
+  JsonSchema,
+  Predicate,
+  Record,
+  Schema,
+} from 'effect';
+import type { Manifest } from '#lib/manifest/schema';
+import { WhenClause } from '#lib/when/when';
 
-type JsonObject = { [k: string]: unknown }
+export type JsonObject = Record<string, unknown>;
 
-const hasAst = (u: unknown): u is { ast: unknown } => {
-  if (u === null) return false
-  if (typeof u !== 'object' && typeof u !== 'function') return false
-  return 'ast' in u
-}
+export const asJsonObject = (value: unknown) =>
+  Predicate.isObject(value) ? value : undefined;
 
-const asSchema = (u: unknown): Schema.Schema.All | undefined => {
-  if (u === undefined) return undefined
-  if (!hasAst(u)) return undefined
-  return u as Schema.Schema.All
-}
+const PackageJson = Schema.fromJsonString(
+  Schema.Record(Schema.String, Schema.Unknown),
+  {
+    space: 2,
+  },
+);
 
-const asJsonObject = (u: unknown): JsonObject | undefined => {
-  if (u === null || typeof u !== 'object' || Array.isArray(u)) return undefined
-  return u as JsonObject
-}
+export class ConfigurationSchemaError extends Schema.TaggedError<
+  ConfigurationSchemaError,
+  {}
+>()('ConfigurationSchemaError', {
+  key: Schema.String,
+  cause: Schema.Defect(),
+}) {}
 
-export const mergeManifestIntoPackageJson = (
+export const mergeManifestIntoPackageJson = Effect.fnUntraced(function* (
   manifest: Manifest,
   existingPackageJson: JsonObject,
-): JsonObject => {
-  const result: JsonObject = { ...existingPackageJson }
+) {
+  const result: JsonObject = { ...existingPackageJson };
 
-  result['name'] = manifest.name
-  result['publisher'] = manifest.publisher
-  if (manifest.displayName !== undefined) result['displayName'] = manifest.displayName
-  if (manifest.description !== undefined) result['description'] = manifest.description
-  if (manifest.version !== undefined) result['version'] = manifest.version
+  result['name'] = manifest.name;
+  result['publisher'] = manifest.publisher;
+  if (manifest.displayName !== undefined)
+    result['displayName'] = manifest.displayName;
+  if (manifest.description !== undefined)
+    result['description'] = manifest.description;
+  if (manifest.version !== undefined) result['version'] = manifest.version;
 
   if (manifest.engineVscode !== undefined) {
-    const engines: JsonObject = { ...asJsonObject(existingPackageJson['engines']) }
-    engines['vscode'] = manifest.engineVscode
-    result['engines'] = engines
+    const engines: JsonObject = {
+      ...asJsonObject(existingPackageJson['engines']),
+    };
+    engines['vscode'] = manifest.engineVscode;
+    result['engines'] = engines;
   }
 
   if (manifest.activationEvents !== undefined) {
-    result['activationEvents'] = [...manifest.activationEvents]
+    result['activationEvents'] = [...manifest.activationEvents];
   }
 
   if (manifest.extensionDependencies !== undefined) {
-    result['extensionDependencies'] = [...manifest.extensionDependencies]
+    result['extensionDependencies'] = [...manifest.extensionDependencies];
   }
 
-  const contributes: JsonObject = { ...asJsonObject(existingPackageJson['contributes']) }
+  const contributes: JsonObject = {
+    ...asJsonObject(existingPackageJson['contributes']),
+  };
 
   if (manifest.commands !== undefined) {
-    contributes['commands'] = manifest.commands.map((c) => {
-      const entry: JsonObject = { command: c.id }
-      if (c.title !== undefined) entry['title'] = c.title
-      if (c.category !== undefined) entry['category'] = c.category
-      return entry
-    })
+    contributes['commands'] = Array.map(manifest.commands, (c) => {
+      const entry: JsonObject = { command: c.id };
+      if (c.title !== undefined) entry['title'] = c.title;
+      if (c.category !== undefined) entry['category'] = c.category;
+      return entry;
+    });
   }
 
   if (manifest.config !== undefined && manifest.config.length > 0) {
-    const properties: JsonObject = {}
+    const properties: JsonObject = {};
     for (const c of manifest.config) {
-      const schema = asSchema(c.valueSchema)
-      const rawJsonSchema: unknown = schema ? JSONSchema.make(schema as Schema.Schema<unknown>) : {}
-      const entry: JsonObject = { ...(asJsonObject(rawJsonSchema) ?? {}) }
+      const { schema, definitions } = yield* Effect.try({
+        try: () =>
+          JsonSchema.toDocumentDraft07(
+            Schema.toJsonSchemaDocument(c.valueSchema),
+          ),
+        catch: (cause) => ConfigurationSchemaError.make({ key: c.key, cause }),
+      });
+      const entry: JsonObject = {
+        ...schema,
+        ...(Record.isEmptyRecord(definitions) ? {} : { definitions }),
+      };
       if (c.description !== undefined) {
-        entry['description'] = c.description
+        entry['description'] = c.description;
       }
-      properties[c.key] = entry
+      properties[c.key] = entry;
     }
-    contributes['configuration'] = { type: 'object', properties }
+    contributes['configuration'] = { type: 'object', properties };
   }
 
   if (manifest.menus !== undefined && manifest.menus.length > 0) {
     // `contributes.menus` is keyed by menu location (`explorer/context`,
     // `commandPalette`, …); each value is the array of entries for that
     // location, in declared order. The flat `MenuDecl[]` is grouped here.
-    const menus: { [location: string]: Array<JsonObject> } = {}
+    const menus: { [location: string]: Array<JsonObject> } = {};
     for (const m of manifest.menus) {
-      const entry: JsonObject = { command: m.command }
+      const entry: JsonObject = { command: m.command };
       if (m.when !== undefined) {
         // Serialize the `WhenAst` to VS Code's canonical clause string. This
         // is the first codegen consumer of the when builder's codec.
-        entry['when'] = Schema.encodeSync(WhenClause)(m.when)
+        entry['when'] = yield* Schema.encodeEffect(WhenClause)(m.when);
       }
-      if (m.group !== undefined) entry['group'] = m.group
-      ;(menus[m.location] ??= []).push(entry)
+      if (m.group !== undefined) entry['group'] = m.group;
+      (menus[m.location] ??= []).push(entry);
     }
-    contributes['menus'] = menus
+    contributes['menus'] = menus;
   }
 
-  if (Object.keys(contributes).length > 0) {
-    result['contributes'] = contributes
+  if (!Record.isEmptyRecord(contributes)) {
+    result['contributes'] = contributes;
   }
 
-  return result
-}
+  return result;
+});
 
-export const writePackageJson = async (path: string, data: JsonObject): Promise<void> => {
-  const serialized = `${JSON.stringify(data, null, 2)}\n`
-  await Bun.write(path, serialized)
-}
+export const writePackageJson = Effect.fnUntraced(function* (
+  path: string,
+  data: JsonObject,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const serialized = yield* Schema.encodeEffect(PackageJson)(data);
+  yield* fs.writeFileString(path, `${serialized}\n`);
+});
 
-export const readPackageJson = async (path: string): Promise<JsonObject> => {
-  const raw: unknown = await Bun.file(path).json()
-  const obj = asJsonObject(raw)
-  if (obj === undefined) {
-    throw new Error(`Expected package.json at ${path} to be a JSON object`)
-  }
-  return obj
-}
+export const readPackageJson = Effect.fnUntraced(function* (path: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const raw = yield* fs.readFileString(path);
+  return yield* Schema.decodeEffect(PackageJson)(raw);
+});

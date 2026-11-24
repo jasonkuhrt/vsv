@@ -17,173 +17,220 @@
 // granularity. Consumers that need finer-grained behavior can match on
 // `cause` (e.g. `vscode.FileSystemError.code` or a `NodeJS.ErrnoException.code`).
 
-import { Data } from 'effect'
-import type * as vscode from 'vscode'
+import { Predicate, Schema } from 'effect';
+import type * as vscode from 'vscode';
+import type { VSCodeHostError } from './vscode-host.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Filesystem
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type FsOperation =
-  | 'readDirectory'
-  | 'stat'
-  | 'realpath'
-  | 'readFile'
-  | 'writeFile'
-  | 'createDirectory'
-  | 'rename'
+const FsOperation = Schema.Literals([
+  'readDirectory',
+  'stat',
+  'realpath',
+  'readFile',
+  'writeFile',
+  'createDirectory',
+  'rename',
+]);
+export type FsOperation = typeof FsOperation.Type;
+
+const Uri = Schema.declare(
+  (value: unknown): value is vscode.Uri =>
+    Predicate.isObject(value) &&
+    typeof value['scheme'] === 'string' &&
+    typeof value['authority'] === 'string' &&
+    typeof value['path'] === 'string' &&
+    typeof value['query'] === 'string' &&
+    typeof value['fragment'] === 'string' &&
+    typeof value['fsPath'] === 'string' &&
+    typeof value['with'] === 'function' &&
+    typeof value.toString === 'function' &&
+    typeof value['toJSON'] === 'function',
+);
+
+const ConfigurationTarget = Schema.Literals([1, 2, 3]);
 
 /**
- * A filesystem operation targeted a path that does not exist. Distinguished
- * from `FsError` because existence checks are the most common branch pattern
- * — consumers reach for `Effect.catchTag('FileNotFoundError', ...)` more often
- * than any other fs failure mode.
+ * @description A filesystem operation targeted a path that does not exist.
+ * Distinguished from `FsError` because existence checks are the most common
+ * branch pattern — consumers reach for `Effect.catchTag('FileNotFoundError',
+ * ...)` more often than any other fs failure mode.
  *
  * Raised by: `rt.fs.readDirectory`, `rt.fs.stat`, `rt.fs.realpath`,
- * `rt.fs.readFile` when the underlying VSCode `FileSystemError` has
- * `code === 'FileNotFound'` or the Node `ErrnoException` has
- * `code === 'ENOENT'`.
+ * `rt.fs.readFile` when the underlying VSCode `FileSystemError` has `code ===
+ * 'FileNotFound'` or the Node `ErrnoException` has `code === 'ENOENT'`.
  */
-export class FileNotFoundError extends Data.TaggedError('FileNotFoundError')<{
-  readonly uri: vscode.Uri
-  readonly operation: FsOperation
-  readonly cause: unknown
-}> {}
+export class FileNotFoundError extends Schema.TaggedError<
+  FileNotFoundError,
+  {}
+>()('FileNotFoundError', {
+  uri: Uri,
+  operation: FsOperation,
+  cause: Schema.Defect(),
+}) {}
 
 /**
- * A filesystem operation that requires a `file://` URI received a different
- * scheme. Currently raised only by `rt.fs.realpath`, which has no portable
- * implementation across virtual/remote filesystems and refuses non-file URIs
- * rather than silently misbehaving.
+ * @description A filesystem operation that requires a `file://` URI received a
+ * different scheme. Currently raised only by `rt.fs.realpath`, which has no
+ * portable implementation across virtual/remote filesystems and refuses
+ * non-file URIs rather than silently misbehaving.
  *
  * This is a programmer error in practice — the consumer is calling a local-
- * only operation against a remote URI. Treating it as a typed error rather
- * than a panic lets test suites assert on it.
+ * only operation against a remote URI. Treating it as a typed error rather than
+ * a panic lets test suites assert on it.
  */
-export class UnsupportedSchemeError extends Data.TaggedError('UnsupportedSchemeError')<{
-  readonly uri: vscode.Uri
-  readonly operation: 'realpath'
-  readonly expectedScheme: 'file'
-}> {}
+export class UnsupportedSchemeError extends Schema.TaggedError<
+  UnsupportedSchemeError,
+  {}
+>()('UnsupportedSchemeError', {
+  uri: Uri,
+  operation: Schema.Literal('realpath'),
+  expectedScheme: Schema.Literal('file'),
+}) {}
 
 /**
- * Catch-all for filesystem errors that aren't `FileNotFoundError` or
- * `UnsupportedSchemeError` — permission denied, broken symlinks, IO errors,
+ * @description Catch-all for filesystem errors that aren't `FileNotFoundError`
+ * or `UnsupportedSchemeError` — permission denied, broken symlinks, IO errors,
  * not-a-directory, etc. The original error lives on `cause` (typically a
  * `vscode.FileSystemError` or a `NodeJS.ErrnoException`).
  */
-export class FsError extends Data.TaggedError('FsError')<{
-  readonly uri: vscode.Uri
-  readonly operation: FsOperation
-  readonly cause: unknown
-}> {}
+export class FsError extends Schema.TaggedError<FsError, {}>()('FsError', {
+  uri: Uri,
+  operation: FsOperation,
+  cause: Schema.Defect(),
+}) {}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Commands
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * A command invoked through `rt.executeCommand`, `rt.executeExternalCommand`,
- * or `rt.executeCommandRaw` rejected at the VSCode boundary. Either the
- * command is unregistered (no handler), the handler threw, or the handler
- * returned a rejected Promise.
+ * @description A command invoked through `rt.executeCommand`,
+ * `rt.executeExternalCommand`, or `rt.executeCommandRaw` rejected at the VSCode
+ * boundary. Either the command is unregistered (no handler), the handler threw,
+ * or the handler returned a rejected Promise.
  *
  * No further split (e.g. `CommandNotFoundError`) — VSCode's
- * `commands.executeCommand` doesn't distinguish "no such command" from
- * "command threw" at the API boundary; both surface as a rejected Promise.
- * Consumers that care can inspect `cause`.
+ * `commands.executeCommand` doesn't distinguish "no such command" from "command
+ * threw" at the API boundary; both surface as a rejected Promise. Consumers
+ * that care can inspect `cause`.
  */
-export class CommandExecutionError extends Data.TaggedError('CommandExecutionError')<{
-  readonly id: string
-  readonly cause: unknown
-}> {}
+export class CommandExecutionError extends Schema.TaggedError<
+  CommandExecutionError,
+  {}
+>()('CommandExecutionError', {
+  id: Schema.String,
+  cause: Schema.Defect(),
+}) {}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Workspace
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * `rt.workspace.openTextDocument` failed to load the target — invalid URI
- * scheme without a registered file system provider, missing file, etc.
+ * @description `rt.workspace.openTextDocument` failed to load the target —
+ * invalid URI scheme without a registered file system provider, missing file,
+ * etc.
  */
-export class DocumentOpenError extends Data.TaggedError('DocumentOpenError')<{
-  readonly target: vscode.Uri | string
-  readonly cause: unknown
-}> {}
+export class DocumentOpenError extends Schema.TaggedError<
+  DocumentOpenError,
+  {}
+>()('DocumentOpenError', {
+  target: Schema.Union([Uri, Schema.String]),
+  cause: Schema.Defect(),
+}) {}
 
 /**
- * `rt.workspace.saveTextDocument` failed at the VSCode boundary. The common
- * causes are readonly/virtual documents, provider failures, or the document
- * becoming invalid between acquisition and save.
+ * @description `rt.workspace.saveTextDocument` failed at the VSCode boundary.
+ * The common causes are readonly/virtual documents, provider failures, or the
+ * document becoming invalid between acquisition and save.
  */
-export class DocumentSaveError extends Data.TaggedError('DocumentSaveError')<{
-  readonly uri: vscode.Uri
-  readonly cause: unknown
-}> {}
+export class DocumentSaveError extends Schema.TaggedError<
+  DocumentSaveError,
+  {}
+>()('DocumentSaveError', {
+  uri: Uri,
+  cause: Schema.Defect(),
+}) {}
 
 /**
- * `rt.workspace.applyEdit` itself rejected. **Note:** an edit that gets
- * accepted but rolled back (e.g. due to overlapping ranges or stale buffer
+ * @description `rt.workspace.applyEdit` itself rejected. **Note:** an edit that
+ * gets accepted but rolled back (e.g. due to overlapping ranges or stale buffer
  * state) flows through the **success** channel as `Effect<boolean, ...>` with
- * `false`. This error is reserved for the API call throwing — malformed
- * edits, unsupported document types, etc.
+ * `false`. This error is reserved for the API call throwing — malformed edits,
+ * unsupported document types, etc.
  */
-export class WorkspaceEditError extends Data.TaggedError('WorkspaceEditError')<{
-  readonly cause: unknown
-}> {}
+export class WorkspaceEditError extends Schema.TaggedError<
+  WorkspaceEditError,
+  {}
+>()('WorkspaceEditError', {
+  cause: Schema.Defect(),
+}) {}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * `rt.defineConfig(...).update(...)` or `rt.defineForeignConfig(...).update(...)`
- * failed at the VSCode boundary. The most common cause: writing to a target
- * that doesn't exist (e.g. `WorkspaceFolder` outside a multi-root workspace).
+ * @description `rt.defineConfig(...).update(...)` or
+ * `rt.defineForeignConfig(...).update(...)` failed at the VSCode boundary. The
+ * most common cause: writing to a target that doesn't exist (e.g.
+ * `WorkspaceFolder` outside a multi-root workspace).
  */
-export class ConfigUpdateError extends Data.TaggedError('ConfigUpdateError')<{
-  readonly key: string
-  readonly target: vscode.ConfigurationTarget
-  readonly cause: unknown
-}> {}
+export class ConfigUpdateError extends Schema.TaggedError<
+  ConfigUpdateError,
+  {}
+>()('ConfigUpdateError', {
+  key: Schema.String,
+  target: ConfigurationTarget,
+  cause: Schema.Defect(),
+}) {}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // State (memento)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * `rt.defineState(...).set(...)` or `.delete(...)` failed at the memento
- * boundary. Memento writes are JSON-serialized; the most common cause is a
- * non-serializable value (function, circular reference).
+ * @description `rt.defineState(...).set(...)` or `.delete(...)` failed at the
+ * memento boundary. Memento writes are JSON-serialized; the most common cause
+ * is a non-serializable value (function, circular reference).
  */
-export class StateUpdateError extends Data.TaggedError('StateUpdateError')<{
-  readonly key: string
-  readonly operation: 'set' | 'delete'
-  readonly cause: unknown
-}> {}
+export class StateUpdateError extends Schema.TaggedError<
+  StateUpdateError,
+  {}
+>()('StateUpdateError', {
+  key: Schema.String,
+  operation: Schema.Literals(['set', 'delete']),
+  cause: Schema.Defect(),
+}) {}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Clipboard
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * `rt.clipboard.readText()` or `.writeText(...)` failed at the OS clipboard
- * boundary. Realistic on remote development connections where the clipboard
- * IPC can fail.
+ * @description `rt.clipboard.readText()` or `.writeText(...)` failed at the OS
+ * clipboard boundary. Realistic on remote development connections where the
+ * clipboard IPC can fail.
  */
-export class ClipboardError extends Data.TaggedError('ClipboardError')<{
-  readonly operation: 'readText' | 'writeText'
-  readonly cause: unknown
-}> {}
+export class ClipboardError extends Schema.TaggedError<ClipboardError, {}>()(
+  'ClipboardError',
+  {
+    operation: Schema.Literals(['readText', 'writeText']),
+    cause: Schema.Defect(),
+  },
+) {}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Aggregate union types — convenience for consumers
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Union of every error type the runtime may raise across all surfaces. Useful
- * when a function spans multiple surfaces and the caller wants a single
- * widened channel.
+ * @description Union of every error type the runtime may raise across all
+ * surfaces. Useful when a function spans multiple surfaces and the caller wants
+ * a single widened channel.
  */
 export type RuntimeError =
   | FileNotFoundError
@@ -196,3 +243,4 @@ export type RuntimeError =
   | ConfigUpdateError
   | StateUpdateError
   | ClipboardError
+  | VSCodeHostError;

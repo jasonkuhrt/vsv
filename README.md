@@ -32,7 +32,7 @@ The endpoint is an SDK where you can author a non-trivial extension without ever
 - **Typed Effect runtime** over the `vscode` API — `defineCommand`/`executeCommand`/`executeExternalCommand`, `defineContextKey`, `defineConfig`/`defineForeignConfig`, `defineState`, `defineEvent`, `quickPick`, plus the `notify`, `clipboard`, `fs`, `workspace`, `editor`, `tabs`, `window`, and `statusBar` namespaces. Every operation returns an `Effect`; an id, key, or value type that drifts from the manifest is a compile error.
 - **Typed `when`-clause authoring** — the `When` builder writes VSCode `when`-clause expressions from manifest-declared context keys, with each operator's value narrowed to the key's declared domain. `WhenClause` is a bidirectional codec between the clause AST and VSCode's clause string.
 - **Codegen** syncs the manifest into `package.json` `contributes.*`. It emits no TypeScript — runtime types come from the manifest source.
-- **`bun:test`-native test utilities** with a hand-rolled `vscode` mock that covers the API shapes real extensions actually use, and is observable + settable for assertions.
+- **`bun:test`-native test utilities** with a VS Code fixture layer that covers the API shapes real extensions actually use, and is observable + settable for assertions.
 - **Custom oxlint rules** for VSCode-specific bugs that the language can't catch on its own.
 - **Loader-hook bootstrap generator** so consumer `.ts` source runs live under VSCode's Node extension host without a build step on every save.
 - **CLI:** `vsv dev`, `vsv test`, `vsv lint`, `vsv typecheck`, `vsv check`, `vsv discover`.
@@ -62,13 +62,13 @@ In a consumer extension repo:
 bun add file:/absolute/path/to/vsv
 
 # Also install the transitive deps vsv cannot bundle for you.
-bun add effect                   # required — Schema is not re-exported
+bun add effect@4.1.2             # Match the schema version used by vsv
 bun add -d tsx                   # required at runtime by the generated bootstrap
 ```
 
 #### Why `bun add file:` — not `bun link`
 
-VSCode's extension host only resolves `require('vscode')` for files physically inside the registered extension directory. A `bun link` symlink points `node_modules/@jasonkuhrt/vsv` at the real vsv checkout (outside the extension), so vsv's compiled runtime calls `require('vscode')` from a path the host refuses to map, and `createRuntime()` resolves against a broken `vscode` object.
+VSCode's extension host only resolves `require('vscode')` for files physically inside the registered extension directory. A `bun link` symlink points `node_modules/@jasonkuhrt/vsv` at the real vsv checkout (outside the extension), so vsv's VS Code adapter loads `vscode` from a path the host refuses to map, so the live adapter can fail to load.
 
 `bun add file:` physically copies vsv into `node_modules/@jasonkuhrt/vsv/`, which lives inside the extension directory — the host maps it correctly and everything Just Works.
 
@@ -85,44 +85,65 @@ bun add file:/absolute/path/to/vsv --force
 Top-level and subpath imports both work. Top-level is the convenience form:
 
 ```ts
-import { CommandDecl, createRuntime, defineManifest, Manifest } from '@jasonkuhrt/vsv'
+import {
+  CommandDecl,
+  createRuntime,
+  defineManifest,
+  Manifest,
+} from '@jasonkuhrt/vsv';
 ```
 
 Subpaths scope by area:
 
 ```ts
-import { defineManifest, CommandDecl } from '@jasonkuhrt/vsv/manifest'
-import { createRuntime } from '@jasonkuhrt/vsv/runtime'
-import { When, WhenClause } from '@jasonkuhrt/vsv/when'
-import { installVSCodeMock, createTestExtensionContext } from '@jasonkuhrt/vsv/runtime/test'
+import { defineManifest, CommandDecl } from '@jasonkuhrt/vsv/manifest';
+import { createRuntime } from '@jasonkuhrt/vsv/runtime';
+import {
+  installVSCodeMock,
+  createTestExtensionContext,
+} from '@jasonkuhrt/vsv/runtime/test';
+import { When, WhenClause } from '@jasonkuhrt/vsv/when';
 ```
 
-The `./runtime/test` subpath is **only** imported from tests — it wires up `bun:test`'s `mock.module('vscode', ...)` and is not meant for extension runtime code.
+### Run an extension with the live VS Code layer
 
-### Test setup (Bun preload)
-
-Bun resolves static imports before any test-file top-level code runs, so the vscode mock must register via preload. Add to your consumer's `bunfig.toml`:
-
-```toml
-[test]
-preload = ["@jasonkuhrt/vsv/runtime/test/preload"]
-```
-
-Then a test:
+Create a runtime from your manifest and provide the VS Code adapter at activation. Import native value constructors such as `Uri` and `WorkspaceEdit` from `@jasonkuhrt/vsv/runtime/vscode`.
 
 ```ts
-import { beforeEach, expect, test } from 'bun:test'
-import { installVSCodeMock, createTestExtensionContext } from '@jasonkuhrt/vsv/runtime/test'
-import { activate } from '../src/extension.ts'
+import { Effect } from 'effect';
+import { createRuntime } from '@jasonkuhrt/vsv/runtime';
+import { VSCodeLive } from '@jasonkuhrt/vsv/runtime/vscode';
+import manifest from './vsv.manifest.ts';
 
-const vscode = installVSCodeMock()
-beforeEach(() => vscode.reset())
+const makeRuntime = createRuntime(manifest).pipe(Effect.provide(VSCodeLive));
+```
 
-test('activate registers expected commands', async () => {
-  const ctx = createTestExtensionContext()
-  await activate(ctx)
-  expect(vscode.state.getRegisteredCommands()).toContain('myext.ping')
-})
+Use the returned Effect in your activation program. Zero-argument reads are Effect values, for example `yield* runtime.clipboard.readText` once you have the runtime. Provide an Effect `FileSystem` layer when you use `fs.realpath` on local files.
+
+### Test an extension using a fixture layer
+
+Provide the VS Code fixture where you create the runtime. Tests can inspect the fixture's state after running an Effect.
+
+```ts
+import { expect, test } from 'bun:test';
+import { Effect } from 'effect';
+import { createRuntime } from '@jasonkuhrt/vsv/runtime';
+import { installVSCodeMock } from '@jasonkuhrt/vsv/runtime/test';
+import manifest from './vsv.manifest.ts';
+
+test('registers the ping command', () => {
+  const vscode = installVSCodeMock();
+  vscode.reset();
+  Effect.runSync(
+    createRuntime(manifest).pipe(
+      Effect.flatMap((runtime) =>
+        runtime.defineCommand('myext.ping', () => Effect.void),
+      ),
+      Effect.provide(vscode.layer),
+    ),
+  );
+  expect(vscode.state.getRegisteredCommands()).toContain('myext.ping');
+});
 ```
 
 ### Scripts (recommended)
@@ -134,7 +155,7 @@ test('activate registers expected commands', async () => {
     "dev": "vsv dev",
     "test": "bun test",
     "lint": "oxlint --type-aware",
-    "typecheck": "tsgo",
+    "typecheck": "tsrs --noEmit --fast",
     "check": "vsv check",
   },
 }
@@ -153,5 +174,5 @@ See [`COLDSTART.md`](./COLDSTART.md) for the full specification and [`TODO.md`](
 
 ## Related projects
 
-- **`@jasonkuhrt/key-binder`** — cross-editor keybinding source of truth. Emits `keybindings.json` (VS Code, per-binding ownership) and `keymaps.lua` (Neovim, whole-file ownership). No dep on vsv; shares design conventions (`_tag` discriminator, Effect Schema, branded primitives, "zero `string` types in public API").
-- **`key-binder-glimpse`** — a VS Code extension authored on vsv. Its `vsv.manifest.ts` is the single source of truth for the extension's commands, context keys, and config; vsv generates the `package.json` contributions and TS registries from it.
+- **`@jasonkuhrt/key-binder`** — cross-editor keybinding source of truth. Emits `keybindings.json` (VS Code, per-binding ownership) and `keymaps.lua` (Neovim, whole-file ownership). Its VS Code clauses use vsv's Effect Schema codecs. Both projects share design conventions (`_tag` discriminator, Effect Schema, branded primitives, "zero `string` types in public API").
+- **`key-binder-glimpse`** — a VS Code extension authored on vsv. Its `vsv.manifest.ts` is the single source of truth for the extension's commands, context keys, and config; vsv generates the `package.json` contributions and infers the runtime registries from it.

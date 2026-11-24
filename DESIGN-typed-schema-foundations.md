@@ -62,24 +62,22 @@ Use it directly — no need to roll a structural `_tag` check or
 
 ```ts
 // src/lib/schema/any-schema.ts
-import { Schema } from 'effect'
+import { Schema } from 'effect';
 
 /**
- * Runtime validator for an Effect Schema value carrying no requirements.
- * Constrained to `Schema.Any` whose `R = never`, since manifests may not
- * declare schemas that require services to decode/encode — the codegen
- * pipeline and the runtime `defineCommand`/`executeCommand` both run
- * outside any layer scope.
+ * @description Runtime validator for an Effect Schema value carrying no
+ * requirements. Constrained to `Schema.Any` whose `R = never`, since manifests
+ * may not declare schemas that require services to decode/encode — the codegen
+ * pipeline and the runtime `defineCommand`/`executeCommand` both run outside
+ * any layer scope.
  *
  * Uses Effect's official `Schema.isSchema` guard, so version-stable.
  */
-export const AnySchema: Schema.Schema<Schema.Schema.AnyNoContext> = Schema.declare(
-  (u): u is Schema.Schema.AnyNoContext => Schema.isSchema(u),
-  {
+export const AnySchema: Schema.Schema<Schema.Schema.AnyNoContext> =
+  Schema.declare((u): u is Schema.Schema.AnyNoContext => Schema.isSchema(u), {
     identifier: 'AnySchema',
     description: 'An Effect Schema with no service requirements',
-  },
-)
+  });
 ```
 
 `Schema.Schema.AnyNoContext` = `Schema<any, any, never>` is the right
@@ -107,66 +105,69 @@ schema and statics attached.
 ```ts
 // src/lib/manifest/decls/context-key.ts
 
-import { Schema } from 'effect'
-import { AnySchema } from '#lib/schema/any-schema'
+import { Schema } from 'effect';
+import { AnySchema } from '#lib/schema/any-schema';
 
 /**
- * Structural schema — what serialization, codegen, and the IR see.
+ * @description Structural schema — what serialization, codegen, and the IR see.
  * The valueType field is erased to `Schema.Schema.AnyNoContext`.
  */
-class ContextKeyDeclStruct extends Schema.TaggedClass<ContextKeyDeclStruct>()('ContextKeyDecl', {
-  name: Schema.NonEmptyTrimmedString,
-  valueType: AnySchema,
-  defaultValue: Schema.optional(Schema.Unknown),
-}) {}
+class ContextKeyDeclStruct extends Schema.TaggedClass<ContextKeyDeclStruct>()(
+  'ContextKeyDecl',
+  {
+    name: Schema.NonEmptyTrimmedString,
+    valueType: AnySchema,
+    defaultValue: Schema.optional(Schema.Unknown),
+  },
+) {}
 
 /**
- * Typed authoring shape — what extension authors see at call sites.
- * Captures the value-schema type `V` so downstream mapped types
- * (Gap 2) can derive the correct operator surface.
+ * @description Typed authoring shape — what extension authors see at call
+ * sites. Captures the value-schema type `V` so downstream mapped types (Gap 2)
+ * can derive the correct operator surface.
  *
- * Structurally satisfies `ContextKeyDeclStruct` but carries the
- * tighter `valueType: V` field at the type level.
+ * Structurally satisfies `ContextKeyDeclStruct` but carries the tighter
+ * `valueType: V` field at the type level.
  */
-export interface ContextKeyDecl<V extends Schema.Schema.AnyNoContext> extends Omit<
-  ContextKeyDeclStruct,
-  'valueType' | 'defaultValue'
-> {
-  readonly valueType: V
-  readonly defaultValue?: Schema.Schema.Type<V> | undefined
+export interface ContextKeyDecl<
+  V extends Schema.Schema.AnyNoContext,
+> extends Omit<ContextKeyDeclStruct, 'valueType' | 'defaultValue'> {
+  readonly valueType: V;
+  readonly defaultValue?: Schema.Schema.Type<V> | undefined;
 }
 
 /**
- * Typed factory + namespace. Callable like a constructor; statics
- * give access to the structural schema, the runtime guard, and the
- * type alias.
+ * @description Typed factory + namespace. Callable like a constructor; statics
+ * give access to the structural schema, the runtime guard, and the type alias.
  *
- *   const k = ContextKeyDecl({ name: 'foo', valueType: Schema.Boolean })
- *   ContextKeyDecl.Struct                  // Schema for codegen/serialization
- *   ContextKeyDecl.is(x)                   // unknown -> is ContextKeyDecl<any>
- *   type T = ContextKeyDecl.Type<typeof k> // V-aware static type
+ * const k = ContextKeyDecl({ name: 'foo', valueType: Schema.Boolean })
+ * ContextKeyDecl.Struct // Schema for codegen/serialization
+ * ContextKeyDecl.is(x) // unknown -> is ContextKeyDecl<any> type T =
+ * ContextKeyDecl.Type<typeof k> // V-aware static type.
  */
 const factory = <V extends Schema.Schema.AnyNoContext>(spec: {
-  readonly name: string
-  readonly valueType: V
-  readonly defaultValue?: Schema.Schema.Type<V>
+  readonly name: string;
+  readonly valueType: V;
+  readonly defaultValue?: Schema.Schema.Type<V>;
 }): ContextKeyDecl<V> =>
   ContextKeyDeclStruct.make({
     name: spec.name,
     valueType: spec.valueType,
-    ...(spec.defaultValue !== undefined ? { defaultValue: spec.defaultValue } : {}),
-  }) as ContextKeyDecl<V>
+    ...(spec.defaultValue !== undefined
+      ? { defaultValue: spec.defaultValue }
+      : {}),
+  }) as ContextKeyDecl<V>;
 
 export const ContextKeyDecl = Object.assign(factory, {
   Struct: ContextKeyDeclStruct,
   is: Schema.is(ContextKeyDeclStruct),
 }) as typeof factory & {
-  readonly Struct: typeof ContextKeyDeclStruct
-  readonly is: Schema.is.Type<typeof ContextKeyDeclStruct>
-}
+  readonly Struct: typeof ContextKeyDeclStruct;
+  readonly is: Schema.is.Type<typeof ContextKeyDeclStruct>;
+};
 
 export namespace ContextKeyDecl {
-  export type Type<D> = D extends ContextKeyDecl<infer V> ? V : never
+  export type Type<D> = D extends ContextKeyDecl<infer V> ? V : never;
 }
 ```
 
@@ -211,37 +212,39 @@ via `<const M>` so authors don't have to manually annotate `as const`:
 ```ts
 // src/lib/manifest/define.ts
 
-import type { CommandDecl, ContextKeyDecl /* … */ } from './decls'
+import type { CommandDecl, ContextKeyDecl /* … */ } from './decls';
 
 export interface ManifestSpec {
-  readonly name: string
-  readonly publisher: string
-  readonly displayName?: string
-  readonly description?: string
-  readonly version?: string
-  readonly engineVscode?: string
-  readonly activationEvents?: ReadonlyArray<string>
-  readonly extensionDependencies?: ReadonlyArray<string>
-  readonly commands?: ReadonlyArray<CommandDecl<any, any>>
-  readonly externalCommands?: ReadonlyArray<ExternalCommandDecl<any, any>>
-  readonly contextKeys?: ReadonlyArray<ContextKeyDecl<any>>
-  readonly externalContextKeys?: ReadonlyArray<ExternalContextKeyDecl<any>>
-  readonly config?: ReadonlyArray<ConfigDecl<any>>
-  readonly foreignConfig?: ReadonlyArray<ForeignConfigDecl<any>>
-  readonly state?: ReadonlyArray<StateDecl<any>>
+  readonly name: string;
+  readonly publisher: string;
+  readonly displayName?: string;
+  readonly description?: string;
+  readonly version?: string;
+  readonly engineVscode?: string;
+  readonly activationEvents?: ReadonlyArray<string>;
+  readonly extensionDependencies?: ReadonlyArray<string>;
+  readonly commands?: ReadonlyArray<CommandDecl<any, any>>;
+  readonly externalCommands?: ReadonlyArray<ExternalCommandDecl<any, any>>;
+  readonly contextKeys?: ReadonlyArray<ContextKeyDecl<any>>;
+  readonly externalContextKeys?: ReadonlyArray<ExternalContextKeyDecl<any>>;
+  readonly config?: ReadonlyArray<ConfigDecl<any>>;
+  readonly foreignConfig?: ReadonlyArray<ForeignConfigDecl<any>>;
+  readonly state?: ReadonlyArray<StateDecl<any>>;
 }
 
 export interface TypedManifest<M extends ManifestSpec> {
-  readonly _tag: 'Manifest'
-  readonly spec: M
+  readonly _tag: 'Manifest';
+  readonly spec: M;
   // The structural Manifest schema (for codegen + serialization)
   // remains addressable as Manifest.Struct.
 }
 
-export const defineManifest = <const M extends ManifestSpec>(spec: M): TypedManifest<M> => ({
+export const defineManifest = <const M extends ManifestSpec>(
+  spec: M,
+): TypedManifest<M> => ({
   _tag: 'Manifest',
   spec,
-})
+});
 ```
 
 The `<const M>` modifier (TypeScript 5.0+) tells the inference engine to
@@ -281,28 +284,27 @@ class ExternalContextKeyDeclStruct extends Schema.TaggedClass<ExternalContextKey
   },
 ) {}
 
-export interface ExternalContextKeyDecl<V extends Schema.Schema.AnyNoContext> extends Omit<
-  ExternalContextKeyDeclStruct,
-  'valueType'
-> {
-  readonly valueType: V
+export interface ExternalContextKeyDecl<
+  V extends Schema.Schema.AnyNoContext,
+> extends Omit<ExternalContextKeyDeclStruct, 'valueType'> {
+  readonly valueType: V;
 }
 
 const factory = <V extends Schema.Schema.AnyNoContext>(spec: {
-  readonly name: string
-  readonly valueType: V
-  readonly ownedBy?: string
+  readonly name: string;
+  readonly valueType: V;
+  readonly ownedBy?: string;
 }): ExternalContextKeyDecl<V> =>
   ExternalContextKeyDeclStruct.make({
     name: spec.name,
     valueType: spec.valueType,
     ...(spec.ownedBy !== undefined ? { ownedBy: spec.ownedBy } : {}),
-  }) as ExternalContextKeyDecl<V>
+  }) as ExternalContextKeyDecl<V>;
 
 export const ExternalContextKeyDecl = Object.assign(factory, {
   Struct: ExternalContextKeyDeclStruct,
   is: Schema.is(ExternalContextKeyDeclStruct),
-})
+});
 ```
 
 Wired into `ManifestSpec.externalContextKeys: ReadonlyArray<ExternalContextKeyDecl<any>>`.
@@ -409,37 +411,40 @@ assertions cover the narrowing and gating.
 fields are the same defect on the command side. After Gap 0:
 
 ```ts
-class CommandDeclStruct extends Schema.TaggedClass<CommandDeclStruct>()('CommandDecl', {
-  id: Schema.NonEmptyTrimmedString,
-  args: AnySchema,
-  result: AnySchema,
-  title: Schema.optional(Schema.String),
-  category: Schema.optional(Schema.String),
-}) {}
+class CommandDeclStruct extends Schema.TaggedClass<CommandDeclStruct>()(
+  'CommandDecl',
+  {
+    id: Schema.NonEmptyTrimmedString,
+    args: AnySchema,
+    result: AnySchema,
+    title: Schema.optional(Schema.String),
+    category: Schema.optional(Schema.String),
+  },
+) {}
 
 export interface CommandDecl<
   A extends Schema.Schema.AnyNoContext,
   R extends Schema.Schema.AnyNoContext,
 > extends Omit<CommandDeclStruct, 'args' | 'result'> {
-  readonly args: A
-  readonly result: R
+  readonly args: A;
+  readonly result: R;
 }
 
-const factory = <A extends Schema.Schema.AnyNoContext, R extends Schema.Schema.AnyNoContext>(spec: {
-  readonly id: string
-  readonly args: A
-  readonly result: R
-  readonly title?: string
-  readonly category?: string
-}): CommandDecl<A, R> =>
-  CommandDeclStruct.make({
-    /* … */
-  }) as CommandDecl<A, R>
+const factory = <
+  A extends Schema.Schema.AnyNoContext,
+  R extends Schema.Schema.AnyNoContext,
+>(spec: {
+  readonly id: string;
+  readonly args: A;
+  readonly result: R;
+  readonly title?: string;
+  readonly category?: string;
+}): CommandDecl<A, R> => CommandDeclStruct.make({/* … */}) as CommandDecl<A, R>;
 
 export const CommandDecl = Object.assign(factory, {
   Struct: CommandDeclStruct,
   is: Schema.is(CommandDeclStruct),
-})
+});
 ```
 
 `runtime.defineCommand(id, handler)` types the handler's args and result
