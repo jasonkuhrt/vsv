@@ -1,0 +1,41 @@
+name: Release
+# Publishes to npm with npm trusted publishing: the registry trusts this
+# workflow through GitHub's OIDC token, so no npm token is stored as a secret.
+# The package's trusted publisher on npmjs.com names this repository and
+# `release.yaml`.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version to publish (semver, e.g. 0.2.0)
+        required: true
+        type: string
+permissions:
+  contents: write # push the release tag and create the GitHub release
+  id-token: write # npm trusted publishing
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install --global npm@^11.5.1
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: npm version "$VERSION" --no-git-tag-version
+        env:
+          VERSION: ${{ inputs.version }}
+      # `prepack` builds the published files.
+      - run: npm publish --access public
+      - run: |
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
+          gh release create "v$VERSION" --generate-notes
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
